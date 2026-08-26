@@ -301,17 +301,25 @@ def build_wled_palette(colors):
     return palette
 
 
-def suggest_recipe(colors, config):
-    """Suggest WLED effect/speed/intensity based on color analysis."""
+def suggest_recipe(colors, config, effects=None):
+    """Suggest WLED effect/speed/intensity based on color analysis.
+    When effects list is provided (from device /json/effects), resolve by name.
+    """
+    from resolve_fx import resolve_theme_fx, resolve_fx_id
+
     effect_cfg = config.get("effect_mapping", {})
     if not colors:
+        if effects:
+            fx, name = resolve_fx_id(effects, ["Fade", "Rainbow", "Breathe"])
+        else:
+            fx, name = effect_cfg.get("default_fx", 12), "Fade"
         return {
-            "fx": effect_cfg.get("default_fx", 9),
-            "sx": effect_cfg.get("default_speed", 128),
-            "ix": effect_cfg.get("default_intensity", 200),
+            "fx": fx,
+            "sx": effect_cfg.get("default_speed", 70),
+            "ix": effect_cfg.get("default_intensity", 100),
             "pal": 0,
-            "bri": 200,
-            "rationale": "Default effect (no colors analyzed)"
+            "bri": 180,
+            "rationale": f"Default effect ({name}, no colors analyzed)"
         }
 
     total_ratio = sum(c["ratio"] for c in colors) or 1
@@ -323,27 +331,27 @@ def suggest_recipe(colors, config):
     # Theme detection by hue
     if avg_hue < 60 or avg_hue > 330:
         theme = "warm"
-        fx_list = effect_cfg.get("sunset_themes", [13, 21, 35])
-        fx = fx_list[0] if fx_list else 13
         rationale = f"Warm tones (avg hue {avg_hue:.0f}°) - sunset/fire effect"
     elif 60 <= avg_hue < 180:
         theme = "nature"
-        fx_list = effect_cfg.get("nature_themes", [10, 14, 21])
-        fx = fx_list[0] if fx_list else 10
         rationale = f"Green/yellow tones (avg hue {avg_hue:.0f}°) - nature/forest effect"
     elif 180 <= avg_hue < 270:
         theme = "cool"
-        fx = 9
         rationale = f"Cool blue tones (avg hue {avg_hue:.0f}°) - ocean/sky effect"
     else:
         theme = "party"
-        fx_list = effect_cfg.get("party_themes", [6, 11, 12])
-        fx = fx_list[0] if fx_list else 6
         rationale = f"Purple/magenta tones (avg hue {avg_hue:.0f}°) - party effect"
 
-    sx = max(50, min(255, int(80 + (100 - avg_sat) * 1.5)))
-    ix = max(100, min(255, int(150 + hue_range * 0.3)))
-    bri = max(80, min(255, int(100 + avg_val * 1.5)))
+    if effects:
+        fx, fx_name = resolve_theme_fx(effects, theme)
+        rationale = f"{rationale} → {fx_name} (fx={fx})"
+    else:
+        # Offline fallback: Fade is fx 12 on WLED 0.14+/16.x classic table
+        fx, fx_name = 12, "Fade"
+
+    sx = max(50, min(90, int(70 + (100 - avg_sat) * 0.2)))
+    ix = max(80, min(120, int(100 + hue_range * 0.1)))
+    bri = max(150, min(200, int(160 + avg_val * 0.3)))
 
     return {
         "fx": fx,

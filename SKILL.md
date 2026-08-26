@@ -1,7 +1,7 @@
 ---
 name: wled-light-recipe
 description: WLED智能灯带光配方设计师。通过搜索多张图片、解析颜色分布、生成平顺丝滑的动态灯光效果并应用到局域网WLED设备。当用户需要基于场景的灯光效果（如茉莉花、日落、海洋）、WLED控制、光配方时调用此技能。
-version: 1.0.2
+version: 1.0.4
 author: symi-daguo
 category: smart-home
 permissions:
@@ -30,7 +30,7 @@ triggers:
   - 调色板
 ---
 
-# WLED Light Recipe Skill v1.0.2
+# WLED Light Recipe Skill v1.0.3
 
 Design smooth, continuously animating light recipes for WLED LED strips.
 Turn "jasmine blooms" into a gentle flowing color gradient on your LED strip.
@@ -138,17 +138,16 @@ NEVER use flashing/strobe effects. The following are FORBIDDEN:
 - FX 11 (Rainbow Runner) - fast strobe
 - FX 19 (Splash) - abrupt color jumps
 
-ONLY use these verified SMOOTH effects:
-- FX 12 (Fade) - smoothest color crossfade [DEFAULT]
-- FX 18 (Dissolve) - soft color melting
-- FX 2 (Breathe) - gentle breathing
-- FX 10 (Forest) - smooth nature gradient
-- FX 14 (Rivendell) - cool forest, smooth
-- FX 13 (Sunset) - warm gradient, smooth
-- FX 21 (Sunset 2) - warm sunset
-- FX 50 (Aurora) - northern lights, smooth
-- FX 26 (Beech) - light green nature
-- FX 20 (Pastel) - soft muted colors
+ONLY use these verified SMOOTH effect **names** (resolve ID from device `/json/effects`):
+- Fade - smoothest color crossfade [DEFAULT]
+- Dissolve - soft color melting
+- Breathe - gentle breathing
+- Sunrise - warm gradient
+- Aurora - northern lights feel
+- Pacifica / Lake - water (when available on device)
+
+**Never hard-code FX IDs** (e.g. do not assume fx=10 is Forest — on WLED 16 it is Scan).
+Use `scripts/resolve_fx.py` / `analyze_multi_images.pick_best_dynamic_fx`.
 
 ### Rule 2: NEVER Use High Speed/Intensity
 - SX (Speed): MUST be 50-90 (slow, gentle)
@@ -212,7 +211,7 @@ Examples:
 **How to Get Image URLs:**
 1. Use Doubao web search with the query above
 2. From search results, find image URLs (https://...jpg/.png)
-3. Good sources: wallpaper sites (wallpaperaccess.com), stock photo sites (pexels.com, unsplash.com)
+3. **ONLY use commercially-free sources** (Pexels License / Unsplash License — both free for commercial use, no attribution required): **pexels.com**, **unsplash.com**. Never use wallpaper sites (e.g. wallpaperaccess.com) or any source lacking a clear free-commercial license; using copyrighted images in a commercial product is a legal risk.
 4. Verify each URL is a direct image link (ends with .jpg, .png, or returns image content)
 5. The script will automatically validate: landscape orientation + min 1280px width
 6. Portrait/low-res images are auto-skipped, so collect 4-6 URLs to ensure 2-3 valid ones
@@ -306,14 +305,14 @@ print(f'Preset {PRESET_ID} recalled')
 
 The `analyze_multi_images.py` auto-selects SMOOTH effects based on dominant theme:
 
-| Dominant Theme | Selected FX | Description |
+| Dominant Theme | Selected FX (by name) | Description |
 |---|---|---|
-| warm (sunset/fire) | 13 (Sunset) | Smooth warm gradient |
-| nature (forest/spring) | 12 (Fade) | Smoothest color crossfade |
-| cool (ocean/sky) | 50 (Aurora) | Smooth northern lights |
-| party (night/dream) | 12 (Fade) | Default smooth |
+| warm (sunset/fire) | Sunrise / Fire 2012 / Fade | Smooth warm gradient |
+| nature (forest/spring) | Fade / Dissolve / Aurora | Smoothest color crossfade |
+| cool (ocean/sky) | Aurora / Pacifica / Fade | Cool water / northern lights |
+| party (night/dream) | Fade / Dissolve / Rainbow | Default smooth |
 
-All effects use SX=70 (slow), IX=100 (subtle) for non-flashing animation.
+IDs are resolved from the live module `GET /json/effects` — never hard-code.
 
 ## Layout-Aware Segments
 
@@ -352,6 +351,27 @@ All recipe files use a portable JSON format (`doubao-wled-recipe-v1`):
   "rationale": "Merged 3 images, smooth FX 12 Fade for continuous animation"
 }
 ```
+
+## SYMI Ambient 首页展示规则（务必遵守）
+
+与 Android App `SYMI-Ambient` 对齐：
+
+| 类型 | 上行 | 下行 | 说明 |
+|------|------|------|------|
+| WLED 原生 Effect（App 精选 /「添加效果」） | 中文译名 | **官方英文**（与模组 `GET /json/effects` 字符串一致） | 不是「光配方」 |
+| **本 skill 手工创建** | 固定文案 **光配方** | 客户录入的场景名 | 唯一称为「光配方」的条目 |
+
+导出到 App 导入格式：
+
+```bash
+python3 scripts/export_symi_ambient.py recipes/jasmine.json --name "茉莉花盛开"
+# → recipes/symi_茉莉花盛开.json
+# 在 SYMI Ambient → 场景 → 导入
+```
+
+生成的 JSON 含 `kind=custom`、`linePrimary=光配方`、`lineSecondary=<客户名>`、`stateJson`（可直接下发 WLED）。
+
+**禁止**把 skill 自定义场景伪装成 WLED 英文 Effect 名；**禁止**改写原生 Effect 的英文行。
 
 ## Directory Structure
 
@@ -405,6 +425,8 @@ wled-light-recipe/
 
 ## Version History
 
+- v1.0.4: FX 按设备 `/json/effects` 英文名解析（`resolve_fx.py`），禁止硬编码 ID
+- v1.0.3: SYMI Ambient 双行展示规则 + `export_symi_ambient.py`（光配方=skill 自建）
 - v1.0.2: 新增图片质量验证(landscape+1280px)、ADB推送图片到屏幕、白色检测优化
 - v1.0.1: 修复暴闪问题，仅用平滑FX(Fade/Dissolve/Breathe)，SX=70/IX=100，多图融合
 - v1.0.0: 初始版本，单图分析，存在闪烁问题

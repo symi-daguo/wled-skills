@@ -1,5 +1,9 @@
 # WLED Effects & Palettes Reference
 
+> **Important (2026-08):** Effect **IDs change across WLED versions**. Always resolve by
+> official English name via `GET /json/effects` (`scripts/resolve_fx.py`). The numeric
+> IDs below are illustrative for WLED 0.14-era docs only — **do not hard-code them**.
+
 Curated list of WLED effects and palettes commonly used in light recipes.
 
 ## Key Effects (FX ID: Name)

@@ -20,31 +20,53 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
 from analyze_image import load_image, analyze_colors, build_wled_palette, suggest_recipe, load_config
+from resolve_fx import load_effects_for_host, resolve_theme_fx, resolve_fx_id
+
+# Smooth effect NAMES (matched against live GET /json/effects — never hard-code IDs)
+SMOOTH_NAMES_WARM = ["Sunrise", "Fire 2012", "Breathe", "Fade", "Dissolve"]
+SMOOTH_NAMES_NATURE = ["Fade", "Dissolve", "Breathe", "Aurora", "Pacifica", "Lake"]
+SMOOTH_NAMES_COOL = ["Aurora", "Pacifica", "Fade", "Dissolve", "Breathe"]
+SMOOTH_NAMES_PARTY = ["Fade", "Dissolve", "Breathe", "Rainbow", "Bpm"]
 
 
-# SMOOTH effects only - verified non-flashing, gradient-based animation
-# NEVER use flashing/strobe effects: Pacifica(77), Flow(75), Fire(35), Fireworks(33),
-# Blink(1), Twinkle(17), Party(6), Rainbow Runner(11), Splash(19)
-SMOOTH_FX_WARM = [13, 21, 39]           # Sunset, Sunset2, Autumn - smooth warm gradients
-SMOOTH_FX_NATURE = [10, 12, 14, 18, 26] # Forest, Fade, Rivendell, Dissolve, Beech - smooth nature
-SMOOTH_FX_COOL = [2, 12, 18, 50]        # Breathe, Fade, Dissolve, Aurora - smooth cool
-SMOOTH_FX_PARTY = [12, 18, 20]          # Fade, Dissolve, Pastel - smooth gentle
+def _effects_list(config=None):
+    cfg = config or load_config()
+    wled = cfg.get("wled", {})
+    host = wled.get("ip") or ""
+    cache = os.path.join(SCRIPT_DIR, ".wled_effects_cache.json")
+    return load_effects_for_host(host or None, cache_path=cache)
 
 
-def pick_dynamic_fx(theme, index):
-    """Pick a smooth fx for the theme, rotating through the list to add variety."""
+def pick_dynamic_fx(theme, index, effects=None):
+    """Pick a smooth fx for the theme by official name on the live device."""
+    effects = effects if effects is not None else _effects_list()
     if theme == "warm":
-        pool = SMOOTH_FX_WARM
+        pool = SMOOTH_NAMES_WARM
     elif theme == "nature":
-        pool = SMOOTH_FX_NATURE
+        pool = SMOOTH_NAMES_NATURE
     elif theme == "cool":
-        pool = SMOOTH_FX_COOL
+        pool = SMOOTH_NAMES_COOL
     else:
-        pool = SMOOTH_FX_PARTY
-    return pool[index % len(pool)]
+        pool = SMOOTH_NAMES_PARTY
+    # rotate preferred names for variety
+    rotated = pool[index % len(pool):] + pool[: index % len(pool)]
+    fx, name = resolve_fx_id(effects, rotated)
+    return fx
 
 
-def analyze_one_image(image_source, config, index):
+def pick_best_dynamic_fx(recipes, effects=None):
+    """Pick the single best smooth fx by dominant theme (name-resolved)."""
+    effects = effects if effects is not None else _effects_list()
+    theme_counts = {}
+    for r in recipes:
+        t = r.get("theme", "nature")
+        theme_counts[t] = theme_counts.get(t, 0) + 1
+    dominant_theme = max(theme_counts, key=theme_counts.get)
+    fx, name = resolve_theme_fx(effects, dominant_theme)
+    return fx
+
+
+def analyze_one_image(image_source, config, index, effects=None):
     """Analyze a single image and return a recipe dict."""
     color_cfg = config.get("color_analysis", {})
     img = load_image(image_source)
@@ -55,11 +77,11 @@ def analyze_one_image(image_source, config, index):
         min_brightness=color_cfg.get("min_brightness", 20),
         avoid_overdark=color_cfg.get("avoid_overdark", True)
     )
-    suggestion = suggest_recipe(colors, config)
+    suggestion = suggest_recipe(colors, config, effects=effects)
     theme = suggestion.get("theme", "nature")
 
-    # Override fx with a dynamic one from the theme pool
-    dynamic_fx = pick_dynamic_fx(theme, index)
+    # Override fx with a dynamic one from the theme pool (name-resolved)
+    dynamic_fx = pick_dynamic_fx(theme, index, effects=effects)
 
     # Use SLOW speed for smooth, non-flashing effect
     # NEVER use SX > 128 - causes strobe
@@ -138,43 +160,13 @@ def merge_colors_from_recipes(recipes):
     return merged
 
 
-def pick_best_dynamic_fx(recipes):
-    """Pick the single best smooth fx based on the dominant theme across recipes.
-    ONLY use verified smooth, non-flashing effects.
-    NEVER use: Pacifica(77), Flow(75), Fire(35), Fireworks(33), Blink(1), Twinkle(17), Party(6)
-    These flash/strobe and are explicitly rejected by users.
-    """
-    theme_counts = {}
-    for r in recipes:
-        t = r.get("theme", "nature")
-        theme_counts[t] = theme_counts.get(t, 0) + 1
-    dominant_theme = max(theme_counts, key=theme_counts.get)
-
-    # Use ONLY verified smooth, gradient-based effects
-    # FX 12 (Fade): smooth color crossfade, no strobe
-    # FX 18 (Dissolve): soft color melting, no strobe
-    # FX 2 (Breathe): gentle breathing, no strobe
-    # FX 10 (Forest): smooth nature gradient
-    # FX 14 (Rivendell): cool forest, smooth
-    # FX 13 (Sunset): warm gradient, smooth
-    # FX 50 (Aurora): northern lights, smooth
-    if dominant_theme == "warm":
-        return 13  # Sunset - smooth warm gradient
-    elif dominant_theme == "nature":
-        return 12  # Fade - smoothest color crossfade
-    elif dominant_theme == "cool":
-        return 50  # Aurora - smooth northern lights
-    else:
-        return 12  # Fade - default smooth
-
-
-def build_merged_recipe(recipes, scene_name):
+def build_merged_recipe(recipes, scene_name, effects=None):
     """Build a single merged recipe from multiple image recipes.
     Uses color merging + best dynamic fx for continuous animation.
     This is more reliable than playlist (which has bugs on some WLED dev builds).
     """
     merged_colors = merge_colors_from_recipes(recipes)
-    fx = pick_best_dynamic_fx(recipes)
+    fx = pick_best_dynamic_fx(recipes, effects=effects)
 
     # Build palette from ALL colors across all recipes
     all_palette_colors = []
@@ -219,12 +211,13 @@ def build_merged_recipe(recipes, scene_name):
 def analyze_multi_images(image_sources, scene_name="Untitled Scene"):
     """Analyze multiple images and return a collection of recipes + merged recipe."""
     config = load_config()
+    effects = _effects_list(config)
     recipes = []
     errors = []
 
     for i, src in enumerate(image_sources):
         try:
-            recipe = analyze_one_image(src, config, i)
+            recipe = analyze_one_image(src, config, i, effects=effects)
             recipes.append(recipe)
         except Exception as e:
             errors.append({"image": src, "error": str(e)})
@@ -233,7 +226,7 @@ def analyze_multi_images(image_sources, scene_name="Untitled Scene"):
         return {"success": False, "message": "No images could be analyzed", "errors": errors}
 
     # Build merged recipe (single dynamic fx with merged colors)
-    merged_recipe = build_merged_recipe(recipes, scene_name)
+    merged_recipe = build_merged_recipe(recipes, scene_name, effects=effects)
 
     # Build playlist suggestion (for WLED versions where playlist auto-advance works)
     total_duration_sec = 60

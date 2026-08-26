@@ -42,14 +42,10 @@
     "avoid_overdark": true
   },
   "effect_mapping": {
-    "default_fx": 9,
-    "dynamic_scenes": [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
-    "static_scenes": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-    "nature_themes": [10, 14, 21, 22, 25, 26, 27, 35, 36, 37, 39, 49, 50],
-    "party_themes": [6, 11, 12, 19, 20, 27, 28, 29, 30],
-    "sunset_themes": [13, 21, 35, 36, 47],
-    "default_speed": 128,
-    "default_intensity": 200,
+    "note": "FX IDs must be resolved from live GET /json/effects by English name (see scripts/resolve_fx.py). Do not hard-code IDs across WLED versions.",
+    "default_fx_name": "Fade",
+    "default_speed": 70,
+    "default_intensity": 100,
     "loop_playlist": true
   },
   "image_search": {
