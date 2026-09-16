@@ -153,6 +153,22 @@ base layer) rather than re-deriving parameters by trial and error.
    or the whole body is silently ignored (no error, no effect). `/json/presets`
    GET is not implemented (`ERR_NOT_IMPL`) - read `http://<ip>/presets.json`.
 
+3. **"Applied successfully" is not "applied as written".** `apply_recipe.py` has an
+   anti-flash clamp on `sx`/`ix`, and the same slider id means different things in
+   different effects (`ix` is *Interval/pause* for Shimmer, *Angle/spatial
+   frequency* for Pacifica, *Intensity* for most others). It is now effect-aware
+   and reports every coercion it makes in `clamp_warnings` (empty = verbatim).
+   Always re-read `/presets.json` and compare `sx`/`ix` against the recipe file;
+   for Shimmer/Pacifica the anti-flash limits do not apply — neither can strobe.
+
+### Parameter policy — the generic SX/IX limits have effect-aware exceptions
+
+The generic anti-flash rule above (`SX 50-90`, `IX 80-120`) still governs ordinary
+effects. It must NOT be applied blindly to `fx 161` (Shimmer) or `fx 101`
+(Pacifica): for Shimmer, `sx` is a traversal time (higher = faster) and `ix` is a
+post-sweep pause (`ix*236` ms, so `ix=80` forces an 18.9 s dead gap), and for
+Pacifica `ix` is a spatial angle. Their ranges live in `_EFFECT_AXIS_EXEMPT`.
+
 ### Order of operations (do not reorder)
 1. **Find a real reference** (free-licence photo/video of the actual scene) - never colour from imagination.
 2. **Analyse it**: spatial structure (what is top/middle/bottom, left/right), real

@@ -313,18 +313,53 @@ def get_device_led_count(ip):
     return 0
 
 
-def _clamp_axis(sx, ix):
+# Some effects reuse the `sx` / `ix` sliders for something that is NOT
+# speed / intensity. Clamping those blindly destroys a deliberately derived
+# design. Verified against the effect source:
+#   161 Shimmer  : sx = Speed (traversal = 200+(255-sx)*80 ms, HIGHER = faster)
+#                  ix = Interval = pause AFTER each sweep (ix*236 ms), 0 = no pause
+#                  -> the generic `ix >= 80` forces a 18.9 s dead pause, and
+#                     `sx <= 90` caps a sweep at 13.4 s, so a 6-scene speed
+#                     narrative (55..152) silently collapses to (55..90).
+#   101 Pacifica : ix = "Angle" = spatial frequency (waveangle += (120+ix)*i)
+# Shimmer's motion is sub-pixel (position in 1/256 LED) and Pacifica is a
+# continuous noise field — neither can strobe, so the anti-flash clamp does not
+# apply to them.
+_EFFECT_AXIS_EXEMPT = {
+    161: {"sx": (40, 200), "ix": (0, 120)},    # Shimmer
+    101: {"sx": (20, 200), "ix": (100, 200)},  # Pacifica
+}
+
+# Every coercion is recorded so a clamp can never again silently rewrite a
+# value the caller derived on purpose.
+_clamp_warnings = []
+
+
+def _clamp_axis(sx, ix, fx=None, record=True):
     """SAFETY CLAMP: enforce non-flashing limits from SKILL.md CRITICAL RULES.
 
     Legacy/external recipes with sx>90 or ix>120 would cause strobe/flashing on
     the device. Applied to the recipe default AND to every per-edge override, so
     a scene cannot smuggle a strobe past the gate.
+
+    Effect-aware: effects listed in `_EFFECT_AXIS_EXEMPT` reuse the same slider
+    ids for other meanings and get their own range. Anything that actually gets
+    coerced is appended to `_clamp_warnings` (never silent) unless `record=False`
+    is passed for a value that is computed but may never be used.
     """
+    lo_sx, hi_sx, lo_ix, hi_ix = 50, 90, 80, 120
+    ex = _EFFECT_AXIS_EXEMPT.get(fx) if fx is not None else None
+    if ex:
+        lo_sx, hi_sx = ex["sx"]
+        lo_ix, hi_ix = ex["ix"]
     try:
-        sx = max(50, min(90, int(sx)))
-        ix = max(80, min(120, int(ix)))
+        raw_sx, raw_ix = int(sx), int(ix)
     except (TypeError, ValueError):
-        sx, ix = 70, 100
+        raw_sx, raw_ix = 70, 100
+    sx = max(lo_sx, min(hi_sx, raw_sx))
+    ix = max(lo_ix, min(hi_ix, raw_ix))
+    if record and (sx, ix) != (raw_sx, raw_ix):
+        _clamp_warnings.append(f"fx={fx}: sx {raw_sx}->{sx}, ix {raw_ix}->{ix}")
     return sx, ix
 
 
@@ -380,7 +415,11 @@ def build_segments(recipe, config, device_led_count=0):
         colors.append([0, 0, 0])
 
     fx = recipe.get("fx", 9)
-    sx, ix = _clamp_axis(recipe.get("sx", 128), recipe.get("ix", 200))
+    # Only record a coercion here when this default is actually going to be used;
+    # with explicit "segments" the branches below supply their own fx-aware clamp
+    # and would otherwise spam spurious warnings for a value that is discarded.
+    sx, ix = _clamp_axis(recipe.get("sx", 128), recipe.get("ix", 200),
+                         record=not recipe.get("segments"))
     # pal=0 means use Default palette; actual colors come from col array
     # This is more reliable than custom palette which requires WLED reboot
     pal = recipe.get("pal", 0)
@@ -404,7 +443,7 @@ def build_segments(recipe, config, device_led_count=0):
                 raise ValueError(
                     "segments[%d] 的范围 %d-%d 非法（灯珠总数 %d）"
                     % (len(out), start, stop, total_leds))
-            s_sx, s_ix = _clamp_axis(spec.get("sx", sx), spec.get("ix", ix))
+            s_sx, s_ix = _clamp_axis(spec.get("sx", sx), spec.get("ix", ix), spec.get("fx"))
             seg = {
                 "id": len(out),
                 "start": start,
@@ -617,7 +656,7 @@ def _build_tv_segments(top, right, bottom, left, direction, start_corner,
             continue
         ov = (edge_overrides or {}).get(edge_name) or {}
         e_fx = ov.get("fx", fx)
-        e_sx, e_ix = _clamp_axis(ov.get("sx", sx), ov.get("ix", ix))
+        e_sx, e_ix = _clamp_axis(ov.get("sx", sx), ov.get("ix", ix), e_fx)
         e_pal = ov.get("pal", pal)
         e_cols = ov.get("col") or _edge_cols_for(edge_name, idx, edge_col_map, colors)
         while len(e_cols) < 3:
@@ -707,6 +746,7 @@ def apply_playlist_recipe(recipe, dry_run=False, takeover=None):
         /presets.json; a preset that was silently dropped (realtime takeover) is
         reported instead of faked as success.
     """
+    _clamp_warnings.clear()
     config = load_config()
     ip = get_wled_ip()
     if not ip:
@@ -960,6 +1000,9 @@ def apply_playlist_recipe(recipe, dry_run=False, takeover=None):
         "realtime": stop_result,
         "state_survived": state_survived,
         "colour_ok": colour_ok,
+        # Never let the anti-flash clamp rewrite a value silently: anything it
+        # coerced is listed here (empty = the recipe was applied verbatim).
+        "clamp_warnings": list(_clamp_warnings),
         "applied": load,
         "verified_state": {
             "on": verify.get("on"),
