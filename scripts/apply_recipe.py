@@ -8,25 +8,58 @@ Usage:
     python3 apply_recipe.py <recipe_json_file>
     python3 apply_recipe.py <recipe_json_file> --dry-run    # preview without applying
     python3 apply_recipe.py --stdin                          # read recipe from stdin
+    python3 apply_recipe.py --release                        # hand strip back to the streamer
+    python3 apply_recipe.py --stop                           # end a looping recipe + turn off
     python3 apply_recipe.py --help                           # show help
 
-Recipe JSON format (compatible with analyze_image.py output):
+Single-scene recipe JSON format (compatible with analyze_image.py output):
 {
   "name": "Jasmine Blooms",
   "colors": [[r,g,b], ...],          # 3 primary colors
   "palette_data": [pos,r,g,b,...],   # WLED custom palette (optional)
   "fx": 10,                          # effect ID
-  "sx": 176,                         # speed
-  "ix": 165,                         # intensity
+  "sx": 70,                          # speed (clamped <=90 to avoid flashing)
+  "ix": 100,                         # intensity (clamped <=120 to avoid flashing)
   "bri": 200,                        # brightness
   "pal": 0                           # palette ID (0=default, uses col array)
 }
+
+Multi-scene LOOPING recipe (a "光配方" that plays ~1 minute of evolving effects):
+{
+  "name": "海浪拍打沙滩",
+  "type": "playlist",
+  "bri": 220,
+  "preset_base": 110,                # first WLED preset id used for scenes
+  "playlist_preset_id": 140,         # preset that re-starts the whole show (optional)
+  "loop": {"repeat": 0, "transition": 20},
+  "scenes": [
+    {
+      "name": "起浪",
+      "duration": 120,               # tenths of a second -> 12 s
+      "bri": 220,
+      "edges": {                     # per-edge override (TV backlight layout)
+        "top":    {"col": [[14,107,168],[23,162,184],[79,209,224]], "fx": 67, "sx": 70, "ix": 100},
+        "right":  {"col": [[23,162,184],[79,209,224],[168,236,245]], "fx": 67, "sx": 78, "ix": 105},
+        "bottom": {"col": [[79,209,224],[232,250,255],[242,200,121]], "fx": 46, "sx": 85, "ix": 110},
+        "left":   {"col": [[242,200,121],[232,164,76],[14,107,168]], "fx": 67, "sx": 62, "ix": 95}
+      }
+    }
+  ],
+  "stop": {"on": false}              # what "结束" does when the user says stop
+}
+
+`loop.repeat` = 0 means endless (playlist.cpp: `playlistRepeat == 0: endless loop`),
+which is exactly "默认循环播放，直到说结束或在 App 里手动停止".
+`duration` / `transition` are in TENTHS of a second (WLED multiplies by 100).
+`fx: 0` is forbidden in looping recipes: palette 0 is effect-dependent and can fall
+back to a random/party palette, so the customer's colours would be ignored.
 
 Output: JSON with {success, applied_state, wled_response, message}
 """
 import json
 import os
 import sys
+import time
 import urllib.request
 import urllib.error
 
@@ -40,22 +73,18 @@ def load_config():
 
 
 def get_wled_ip():
-    """Get WLED IP from cache or config. Returns empty string if not found."""
-    cache_path = os.path.join(SCRIPT_DIR, ".wled_cache.json")
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r") as f:
-                cache = json.load(f)
-                if cache.get("ip"):
-                    return cache["ip"]
-        except Exception:
-            pass
-    config = load_config()
-    ip = config.get("wled", {}).get("ip", "")
-    if ip:
-        return ip
-    # No IP found - caller should handle empty string
-    return ""
+    """Health-checked WLED IP via discover_wled.resolve_ip().
+
+    The raw .wled_cache.json is deliberately NOT read here: a stale cache used
+    to be returned unverified, which sent writes to an offline device.
+    """
+    try:
+        if SCRIPT_DIR not in sys.path:
+            sys.path.insert(0, SCRIPT_DIR)
+        import discover_wled
+        return discover_wled.resolve_ip()
+    except Exception:
+        return load_config().get("wled", {}).get("ip", "")
 
 
 def wled_request(ip, path, method="GET", data=None, timeout=5):
@@ -84,10 +113,196 @@ def wled_request(ip, path, method="GET", data=None, timeout=5):
         return {"error": str(e)}
 
 
-def stop_udp_realtime(ip):
-    """Stop UDP realtime mode so JSON API can take control."""
-    result = wled_request(ip, "/json/state", method="POST", data={"live": False, "on": True})
-    return result
+def read_live_state(ip):
+    """Who currently owns the strip? Returns {live, lor, fps}.
+
+    `fps` is the decisive signal: WLED only counts frames while its own effect
+    engine services the strip, so fps>0 means a recipe is actually being
+    rendered and fps~0 means incoming realtime data owns the LEDs.
+    """
+    info = wled_request(ip, "/json/info", method="GET", timeout=3)
+    state = wled_request(ip, "/json/state", method="GET", timeout=3)
+    live = info.get("live") if isinstance(info, dict) else None
+    leds = info.get("leds", {}) if isinstance(info, dict) else {}
+    lor = state.get("lor") if isinstance(state, dict) else None
+    return {"live": bool(live) if live is not None else None, "lor": lor, "fps": leds.get("fps")}
+
+
+# --- UDP sync contention ---------------------------------------------------
+# A WLED on a real customer LAN is rarely alone. Measured on 192.168.2.9:
+# `GET /json/cfg` returned
+#     if.sync.recv = {"bri":true,"col":true,"fx":true,"pal":true,"grp":1}
+# while a second node (192.168.2.57) broadcast WLED sync packets on group 1.
+# Effect: the recipe was silently replaced ~18 s after the write
+# (fx 46 -> 0, pal 5 -> 0, col0 (232,251,255) -> (0,0,0)), leaving the strip
+# BLACK. `lor`/realtime handling does not help here — sync write is a *config*
+# write, not a pixel stream. So a recipe must take the device out of the sync
+# group (receive side) for the duration of the show and put it back afterwards.
+#
+# Safe to patch partially: cfg.cpp uses `#define CJSON(a,b) a = b | a`, so keys
+# absent from the POST keep their current value (an empty MQTT password or WiFi
+# SSID is never wiped by a partial update).
+UDP_SYNC_RECV_KEYS = ("bri", "col", "fx", "pal")
+NET_BACKUP_PATH = os.path.join(SCRIPT_DIR, ".wled_net_backup.json")
+
+
+def read_udp_sync(ip):
+    """Return the device's sync/live settings, or None if /json/cfg is unreadable."""
+    cfg = wled_request(ip, "/json/cfg", method="GET", timeout=5)
+    if not isinstance(cfg, dict):
+        return None
+    iface = cfg.get("if") or {}
+    return {"sync": iface.get("sync") or {}, "live": iface.get("live") or {}}
+
+
+def suppress_udp_sync(ip):
+    """Take the device out of the LAN's UDP sync group (receive side).
+
+    Returns {checked, suppressed, active_keys, message}. The original settings
+    are written to scripts/.wled_net_backup.json so `release_realtime_override`
+    can restore exactly what the customer had.
+    """
+    before = read_udp_sync(ip)
+    if before is None:
+        return {"checked": False, "suppressed": False,
+                "message": "无法读取 /json/cfg，跳过 UDP 同步抢占检查"}
+    recv = (before.get("sync") or {}).get("recv") or {}
+    active = [k for k in UDP_SYNC_RECV_KEYS if recv.get(k)]
+    if not active:
+        return {"checked": True, "suppressed": False, "recv_before": recv,
+                "message": "设备未接收 UDP 同步（bri/col/fx/pal 均为关），不会被他机改写"}
+
+    wled_request(ip, "/json/cfg", method="POST",
+                 data={"if": {"sync": {"recv": {k: False for k in active}}}})
+    time.sleep(0.5)
+    after = read_udp_sync(ip) or {}
+    recv_after = (after.get("sync") or {}).get("recv") or {}
+    ok = all(not recv_after.get(k) for k in active)
+    if ok:
+        try:
+            with open(NET_BACKUP_PATH, "w", encoding="utf-8") as fh:
+                json.dump({"ip": ip, "recv": recv}, fh, indent=2, ensure_ascii=False)
+        except OSError:
+            pass
+    return {
+        "checked": True,
+        "suppressed": ok,
+        "active_keys": active,
+        "recv_before": recv,
+        "recv_after": recv_after,
+        "message": (
+            f"已关闭 UDP 同步接收 {active}：局域网内其它 WLED 不会再改写本机效果"
+            "（--release 时会原样恢复）"
+            if ok else
+            "UDP 同步接收关闭失败，本机效果仍可能被局域网其它 WLED 改写"
+        ),
+    }
+
+
+def restore_udp_sync(ip):
+    """Put back the sync settings recorded by suppress_udp_sync (no-op if none)."""
+    if not os.path.exists(NET_BACKUP_PATH):
+        return {"restored": False, "message": "没有需要恢复的网络设置"}
+    try:
+        with open(NET_BACKUP_PATH, "r", encoding="utf-8") as fh:
+            backup = json.load(fh)
+    except (OSError, ValueError):
+        return {"restored": False, "message": "网络设置备份损坏，未恢复"}
+    recv = backup.get("recv") or {}
+    if not recv:
+        return {"restored": False, "message": "网络设置备份为空，未恢复"}
+    wled_request(ip, "/json/cfg", method="POST", data={"if": {"sync": {"recv": recv}}})
+    time.sleep(0.5)
+    now = read_udp_sync(ip) or {}
+    recv_now = (now.get("sync") or {}).get("recv") or {}
+    try:
+        os.remove(NET_BACKUP_PATH)
+    except OSError:
+        pass
+    return {"restored": True, "recv": recv_now,
+            "message": f"已恢复 UDP 同步接收设置为 {recv_now}"}
+
+
+def stop_udp_realtime(ip, takeover="auto"):
+    """Take control of the strip so a recipe write is actually visible.
+
+    WLED has two independent mechanisms and a recipe needs the right one, else
+    it reports success while the LEDs keep showing somebody else's data:
+
+      * {"live": false} -> exitRealtime(). Enough when nothing else streams.
+        If another device keeps pushing realtime frames (screen sync, SYMI
+        Ambient, another controller) the flag is set again within a second and
+        this call is a no-op in practice.
+
+      * {"lor": 2} -> REALTIME_OVERRIDE_ALWAYS. While set, WLED renders its own
+        effects and *discards* every incoming realtime packet (udp.cpp:
+        `if (realtimeOverride) return;`). Required whenever a stream is live.
+
+    `lor` matters for a second reason: while realtimeMode is set, WLED skips the
+    entire main-loop block containing handlePresets() and handlePlaylist()
+    (wled.cpp:131), so preset saves are silently thrown away. Taking the
+    override lifts that as well.
+
+    Measured on WLED 16.0.1 against an 8 Hz DRGB stream on :21324, using
+    leds.fps as the "who owns the strip" signal:
+
+        stream + lor=0        fps 10-12   realtime owns the strip
+        stream + live:false   fps 10      stream takes it straight back
+        stream + lor=2        fps 43      our effect engine owns it
+        no stream            fps 43      our effect engine owns it
+
+    takeover: "auto" (default) engages the override only when a stream is
+    still contested after exitRealtime; "on" always engages it; "off" never
+    does (caller prefers to give up rather than fight).
+
+    Caller must release with release_realtime_override(ip) when the recipe is
+    no longer wanted, otherwise the external sender stays blocked.
+    """
+    before = read_live_state(ip)
+    sync_result = suppress_udp_sync(ip)
+    wled_request(ip, "/json/state", method="POST", data={"live": False, "on": True})
+    time.sleep(0.8)
+    after_exit = read_live_state(ip)
+
+    override_engaged = False
+    if after_exit.get("live"):
+        # Something is still streaming: exiting realtime is not enough.
+        if takeover != "off":
+            wled_request(ip, "/json/state", method="POST", data={"lor": 2})
+            time.sleep(0.6)
+            override_engaged = True
+    elif takeover == "on":
+        wled_request(ip, "/json/state", method="POST", data={"lor": 2})
+        time.sleep(0.6)
+        override_engaged = True
+
+    final = read_live_state(ip)
+    return {
+        "success": True,
+        "before": before,
+        "after_exit": after_exit,
+        "final": final,
+        "override_engaged": override_engaged,
+        "udp_sync": sync_result,
+        "contested": bool(after_exit.get("live")) and not override_engaged,
+        "message": (
+            "外部实时流仍在推送，已用 lor=2 优先级接管（实时包会被丢弃）"
+            if override_engaged and after_exit.get("live") else
+            "实时流未清除，写入可能被覆盖（takeover=off）"
+            if after_exit.get("live") else
+            "已退出实时模式，设备交回本地效果引擎"
+        ),
+    }
+
+
+def release_realtime_override(ip):
+    """Hand the strip back: clear lor, leave realtime, restore UDP sync settings."""
+    wled_request(ip, "/json/state", method="POST", data={"lor": 0})
+    time.sleep(0.3)
+    sync_restore = restore_udp_sync(ip)
+    state = read_live_state(ip)
+    state["udp_sync_restore"] = sync_restore
+    return state
 
 
 def get_device_led_count(ip):
@@ -96,6 +311,49 @@ def get_device_led_count(ip):
     if isinstance(info, dict) and "leds" in info:
         return info.get("leds", {}).get("count", 0)
     return 0
+
+
+def _clamp_axis(sx, ix):
+    """SAFETY CLAMP: enforce non-flashing limits from SKILL.md CRITICAL RULES.
+
+    Legacy/external recipes with sx>90 or ix>120 would cause strobe/flashing on
+    the device. Applied to the recipe default AND to every per-edge override, so
+    a scene cannot smuggle a strobe past the gate.
+    """
+    try:
+        sx = max(50, min(90, int(sx)))
+        ix = max(80, min(120, int(ix)))
+    except (TypeError, ValueError):
+        sx, ix = 70, 100
+    return sx, ix
+
+
+def normalise_cols(col, fallback=(128, 128, 128)):
+    """Normalise any colour spec to WLED's required [[r,g,b],[r,g,b],[r,g,b]].
+
+    WLED's `col` must be an array of COLOURS. A flat [r,g,b] is silently accepted
+    but parsed as three KELVIN temperatures (`json.cpp`: `colX.isNull()` ->
+    `int kelvin = colarr[i]` -> `colorKtoRGB(205)` = deep red), which is how a
+    recipe with perfectly good RGB values rendered as a solid red strip while
+    every structural check still passed. Always go through here.
+    """
+    if not col:
+        col = list(fallback)
+    if isinstance(col, (int, float)):
+        col = [int(col), int(col), int(col)]
+    if col and isinstance(col[0], (int, float)):
+        col = [list(col)] * 3            # flat [r,g,b] -> three identical colours
+    out = []
+    for c in list(col)[:3]:
+        if isinstance(c, (int, float)):
+            c = [int(c)] * 3
+        c = [max(0, min(255, int(v))) for v in list(c)[:4]]
+        while len(c) < 3:
+            c.append(0)
+        out.append(c)
+    while len(out) < 3:
+        out.append(list(out[-1]))
+    return out
 
 
 def build_segments(recipe, config, device_led_count=0):
@@ -122,14 +380,133 @@ def build_segments(recipe, config, device_led_count=0):
         colors.append([0, 0, 0])
 
     fx = recipe.get("fx", 9)
-    sx = recipe.get("sx", 128)
-    ix = recipe.get("ix", 200)
+    sx, ix = _clamp_axis(recipe.get("sx", 128), recipe.get("ix", 200))
     # pal=0 means use Default palette; actual colors come from col array
     # This is more reliable than custom palette which requires WLED reboot
     pal = recipe.get("pal", 0)
     bri_seg = recipe.get("seg_bri", 255)
 
+    # ---- explicit segments (highest priority) -------------------------------
+    #   "segments": [{"start":0,"stop":70,"fx":101,"sx":90,"pal":5,
+    #                 "col":[[14,92,130],[23,137,200],[234,251,255]]}, ...]
+    # The recipe states every segment verbatim. This is the primitive that makes
+    # a smooth, per-LED design possible: e.g. one segment running a native effect
+    # over the WHOLE ring (so all LEDs are one continuous field) plus one
+    # segment on the near edge for the shore. No layout inference, no 2-3 LED
+    # bands — WLED renders the effect at single-LED resolution.
+    seg_specs = recipe.get("segments")
+    if seg_specs:
+        out = []
+        for spec in seg_specs:
+            start = int(spec.get("start", 0))
+            stop = int(spec.get("stop", 0))
+            if stop <= start or start < 0 or stop > total_leds:
+                raise ValueError(
+                    "segments[%d] 的范围 %d-%d 非法（灯珠总数 %d）"
+                    % (len(out), start, stop, total_leds))
+            s_sx, s_ix = _clamp_axis(spec.get("sx", sx), spec.get("ix", ix))
+            seg = {
+                "id": len(out),
+                "start": start,
+                "stop": stop,
+                "len": stop - start,
+                "on": bool(spec.get("on", True)),
+                "bri": int(spec.get("bri", bri_seg)),
+                "fx": int(spec.get("fx", fx)),
+                "sx": s_sx,
+                "ix": s_ix,
+                "pal": int(spec.get("pal", pal)),
+                "col": normalise_cols(spec.get("col"), colors[0]),
+            }
+            for key, jkey in (("rev", "rev"), ("mi", "mi"), ("of", "of"),
+                              ("grp", "grp"), ("spc", "spc"), ("bm", "bm"),
+                              ("cct", "cct"),
+                              # Shimmer (fx 161) is driven by these: c1 = band
+                              # size (radius = (c1*SEGLEN>>7)+1), c2 = granular
+                              # modulator, c3 = modulator speed, o2 = reverse.
+                              # Without c1 Shimmer defaults to 128 -> radius 36 >
+                              # SEGLEN, i.e. the band covers the whole strip.
+                              ("c1", "c1"), ("c2", "c2"), ("c3", "c3"),
+                              ("o1", "o1"), ("o2", "o2"), ("o3", "o3"),
+                              ("frz", "frz")):
+                if key in spec:
+                    seg[jkey] = int(spec[key]) if jkey != "bm" else int(spec[key])
+            for bkey in ("rev", "mi", "o1", "o2", "o3", "frz"):
+                if bkey in spec:
+                    seg[bkey] = bool(spec[bkey])
+            out.append(seg)
+        return out
+
+    # Per-edge colours (from a video recipe) override the rotated palette colours,
+    # so a TV-backlight layout shows the actual colours of the frame's four edges.
+    edge_sequences = recipe.get("edge_sequences") or {}
+    edge_colors = recipe.get("edge_colors") or {}
+    edge_col_map = {}
+    for _name in ("top", "right", "bottom", "left"):
+        _seq = edge_sequences.get(_name)
+        if not _seq and edge_colors.get(_name):
+            _seq = [edge_colors[_name]]
+        if _seq:
+            edge_col_map[_name] = [[int(max(0, min(255, v))) for v in rgb] for rgb in _seq]
+    edge_offsets = recipe.get("edge_offsets") or {}
+
+    # Per-edge full override ("edges"): colour triple + its own effect/speed/intensity.
+    # This is what lets one scene run four DIFFERENT effects on the four edges
+    # (e.g. flowing water on three edges, a wave crest sweeping the shore edge).
+    edge_overrides = recipe.get("edges") or {}
+
     segments = []
+
+    # ---- authored key frame ("bands") ---------------------------------------
+    # A scene may instead be an explicit list of static bands, either verbose
+    #   "bands": [{"start":0,"stop":3,"col":[14,92,130]}, ...]
+    # or terse (what build_keyframe_animation.py writes — 1/5 the file size)
+    #   "bands": [[0, 3, 14, 92, 130], ...]
+    # Each band becomes a Solid (fx=0) segment, so the frame is a hand-authored
+    # spatial picture ("分析动画首尾帧，把灯珠按规划的效果去变化"). A playlist of
+    # such frames with transition == dur crossfades continuously, which is how a
+    # physically-derived *speed* is obtained: the wave front advances a fixed
+    # fraction of the ring per frame, so px/s = N * step / frame_seconds.
+    # Solid is used because `mode_static()` fills with SEGCOLOR(0) directly, so
+    # the shown colour is exactly the authored colour and never a palette guess.
+    bands = recipe.get("bands")
+    if bands:
+        out = []
+        for band in bands:
+            if isinstance(band, (list, tuple)):
+                start, stop = int(band[0]), int(band[1])
+                col = [int(v) for v in band[2:5]]
+                bri_v = int(band[5]) if len(band) > 5 else bri_seg
+            else:
+                start = int(band.get("start", 0))
+                stop = int(band.get("stop", start))
+                col = [int(v) for v in (band.get("col") or [128, 128, 128])]
+                bri_v = int(band.get("bri", bri_seg))
+            if stop <= start:
+                continue
+            col = [max(0, min(255, v)) for v in col]
+            while len(col) < 3:
+                col.append(col[-1] if col else 0)
+            # WLED's "col" must be an array of COLOURS, i.e. [[r,g,b],[r,g,b],[r,g,b]].
+            # A flat [r,g,b] is accepted but parsed as three KELVIN temperatures
+            # (json.cpp: `colX.isNull()` -> `int kelvin = colarr[i]`) — measured as
+            # colorKtoRGB(205) = deep red, so every band came out pure red and the
+            # strip looked frozen. Solid only uses colors[0], but all three are set
+            # so a palette lookup can never pick up a stale colour.
+            out.append({
+                "id": len(out),
+                "start": start,
+                "stop": stop,
+                "len": stop - start,
+                "on": True,
+                "bri": bri_v,
+                "fx": 0,
+                "sx": 0,
+                "ix": 0,
+                "pal": 0,
+                "col": normalise_cols(col),
+            })
+        return out
 
     if layout_type == "tv_backlight" and layout.get("segment_strategy") == "per_edge":
         edges = layout.get("edges", {})
@@ -150,12 +527,15 @@ def build_segments(recipe, config, device_led_count=0):
                 segments = []
             else:
                 segments = _build_tv_segments(top, right, bottom, left, direction, start_corner,
-                                              colors, fx, sx, ix, pal, bri_seg)
+                                              colors, fx, sx, ix, pal, bri_seg,
+                                              edge_col_map, edge_offsets, edge_overrides)
         elif top + right + bottom + left > 0:
             segments = _build_tv_segments(top, right, bottom, left, direction, start_corner,
-                                          colors, fx, sx, ix, pal, bri_seg)
+                                          colors, fx, sx, ix, pal, bri_seg,
+                                          edge_col_map, edge_offsets, edge_overrides)
     else:
         # linear / ring / matrix -> single segment
+        # ("edges" overrides only apply to the per-edge TV layout)
         segments = [{
             "id": 0,
             "start": 0,
@@ -167,7 +547,7 @@ def build_segments(recipe, config, device_led_count=0):
             "sx": sx,
             "ix": ix,
             "pal": pal,
-            "col": [colors[0], colors[1], colors[2]]
+            "col": normalise_cols(colors)
         }]
 
     # Fallback: if segments is empty for any reason, create single segment covering all LEDs
@@ -183,15 +563,37 @@ def build_segments(recipe, config, device_led_count=0):
             "sx": sx,
             "ix": ix,
             "pal": pal,
-            "col": [colors[0], colors[1], colors[2]]
+            "col": normalise_cols(colors)
         }]
 
     return segments
 
 
+def _edge_cols_for(edge_name, idx, edge_col_map, colors):
+    """Colors for one backlight edge: per-edge sequence, else rotated palette."""
+    seq = (edge_col_map or {}).get(edge_name)
+    if seq:
+        cols = [list(c) for c in seq[:3]]
+        while len(cols) < 3:
+            cols.append(list(cols[-1]) if cols else [0, 0, 0])
+        return cols
+    return [colors[idx % 3], colors[(idx + 1) % 3], colors[(idx + 2) % 3]]
+
+
 def _build_tv_segments(top, right, bottom, left, direction, start_corner,
-                       colors, fx, sx, ix, pal, bri_seg):
-    """Build 4 segments for TV backlight layout."""
+                       colors, fx, sx, ix, pal, bri_seg, edge_col_map=None, edge_offsets=None,
+                       edge_overrides=None):
+    """Build 4 segments for TV backlight layout (one per edge).
+
+    When edge_col_map is provided (video recipes), each segment carries the colors
+    sampled from that edge of the source frames; otherwise the palette is rotated
+    across the four edges.
+
+    edge_overrides (recipe key "edges") lets a single scene run a *different*
+    effect/colour-set on each edge — the mechanism behind layered recipes such as
+    "海浪拍打沙滩" where three edges flow like water and the shore edge sweeps
+    like a breaking wave.
+    """
     segments = []
     pos = 0
 
@@ -213,32 +615,391 @@ def _build_tv_segments(top, right, bottom, left, direction, start_corner,
     for idx, (edge_name, length) in enumerate(edge_order):
         if length <= 0:
             continue
-        edge_color_idx = idx % 3
-        segments.append({
+        ov = (edge_overrides or {}).get(edge_name) or {}
+        e_fx = ov.get("fx", fx)
+        e_sx, e_ix = _clamp_axis(ov.get("sx", sx), ov.get("ix", ix))
+        e_pal = ov.get("pal", pal)
+        e_cols = ov.get("col") or _edge_cols_for(edge_name, idx, edge_col_map, colors)
+        while len(e_cols) < 3:
+            e_cols.append(list(e_cols[-1]) if e_cols else [0, 0, 0])
+        seg = {
             "id": idx,
             "start": pos,
             "stop": pos + length,
             "len": length,
             "on": True,
-            "bri": bri_seg,
-            "fx": fx,
-            "sx": sx,
-            "ix": ix,
-            "pal": pal,
-            "col": [colors[edge_color_idx], colors[(edge_color_idx + 1) % 3], colors[(edge_color_idx + 2) % 3]]
-        })
+            "bri": int(ov.get("bri", bri_seg)),
+            "fx": int(e_fx),
+            "sx": e_sx,
+            "ix": e_ix,
+            "pal": int(e_pal),
+            "col": normalise_cols(e_cols)
+        }
+        of = ov.get("of")
+        if of is None and edge_offsets and edge_name in edge_offsets:
+            of = edge_offsets[edge_name]
+        if of is not None:
+            seg["of"] = int(of)
+        segments.append(seg)
         pos += length
-
-    # Extend last segment to cover any remaining LEDs
-    if segments and pos < sum(t for _, t in edge_order if t > 0):
-        # Already covered
-        pass
 
     return segments
 
 
-def apply_recipe(recipe, dry_run=False):
-    """Apply recipe to WLED device."""
+def clear_stale_segments(ip, segments):
+    """Append `{"stop":0}` entries so no segment from a PREVIOUS recipe survives.
+
+    WLED's `seg` array only updates the entries it lists — the array index
+    becomes the segment id (json.cpp: `deserializeSegment(elem, it++, presetId)`),
+    and segments that are not listed are left completely untouched. A leftover
+    segment also sits ABOVE the new ones (higher id = upper layer), so a new
+    1-segment recipe gets hidden behind the 4 edge segments of an earlier one and
+    only the uncovered sliver of the strip shows the new effect. That is exactly
+    why "只有一小段" happens; never send a segment list without clearing the tail.
+
+    `{"stop":0}` is the documented delete signal (`deleted++` in json.cpp).
+    """
+    cur = wled_request(ip, "/json/state", method="GET", timeout=3)
+    if not isinstance(cur, dict):
+        return segments
+    existing = len(cur.get("seg") or [])
+    out = list(segments)
+    for i in range(len(segments), max(existing, len(segments))):
+        out.append({"id": i, "stop": 0})
+    return out
+
+
+def build_scene_state(scene, config, device_led_count=0, ip=None):
+    """One playlist scene -> a complete WLED state patch (on/bri/seg)."""
+    segments = build_segments(scene, config, device_led_count)
+    if ip:
+        segments = clear_stale_segments(ip, segments)
+    return {
+        "on": True,
+        "bri": int(scene.get("bri", 220)),
+        "transition": 0,
+        "mainseg": 0,
+        "seg": segments,
+    }
+
+
+def _local_list_presets(ip):
+    """Read /presets.json; return {} on failure. Kept local to avoid a circular
+    import with save_preset.py (which imports stop_udp_realtime from this module)."""
+    res = wled_request(ip, "/presets.json", method="GET", timeout=5)
+    return res if isinstance(res, dict) else {}
+
+
+def apply_playlist_recipe(recipe, dry_run=False, takeover=None):
+    """Apply a multi-scene LOOPING recipe ("光配方") to WLED.
+
+    Why a playlist and not one long effect: a customer-facing recipe has to show
+    ~1 minute of *evolving* light, then keep looping until the user says stop (or
+    stops it in the WLED app). WLED's playlist is the only mechanism that gives
+    that for free, with a crossfade between scenes so the strip never blinks off.
+
+    Product rules encoded here:
+      * `loop.repeat = 0` -> endless loop (playlist.cpp: "playlistRepeat == 0:
+        endless loop"). Never use repeat>=1, or the show stops by itself.
+      * `transition` (tenths of a second) is a crossfade, so there is no black
+        frame between scenes — required by the "任何时候不能有黑色" rule.
+      * every scene is saved as its own WLED preset first, then verified in
+        /presets.json; a preset that was silently dropped (realtime takeover) is
+        reported instead of faked as success.
+    """
+    config = load_config()
+    ip = get_wled_ip()
+    if not ip:
+        return {
+            "success": False,
+            "message": "WLED IP not configured. Please run: python3 scripts/discover_wled.py  or set ip in config.json"
+        }
+
+    if not dry_run:
+        try:
+            from guard import require_write
+        except ImportError:
+            return {
+                "success": False,
+                "blocked": True,
+                "reason": "guard_missing",
+                "message": "写入守卫 scripts/guard.py 缺失，已拒绝写入。请重新安装本技能。",
+            }
+        blocked = require_write(config=config, action="apply_playlist_recipe")
+        if blocked:
+            return blocked
+
+    scenes = recipe.get("scenes") or []
+    if not scenes and recipe.get("model"):
+        # Recipe stores the physical model, not the frames: a 40-frame x 28-band
+        # animation is ~30 KB of numbers on disk, the model is ~400 bytes and
+        # keeps the speed reproducible from the physics table. Compile here.
+        model = dict(recipe["model"])
+        model.pop("kind", None)
+        # top-level keys win, so editing "bri" on the recipe still works
+        for _k in ("bri", "preset_base", "playlist_preset_id"):
+            if _k in recipe:
+                model[_k] = recipe[_k]
+        try:
+            from build_keyframe_animation import build_recipe as _compile_frames
+        except ImportError:
+            return {"success": False,
+                    "message": "配方使用 model 形式，但缺少 scripts/build_keyframe_animation.py"}
+        try:
+            built = _compile_frames(config, name=recipe.get("name", "recipe"), **model)
+        except (TypeError, SystemExit) as exc:
+            return {"success": False, "message": f"关键帧编译失败: {exc}"}
+        scenes = built["scenes"]
+        if not recipe.get("loop"):
+            recipe = dict(recipe, loop=built["loop"])
+    if not scenes:
+        return {"success": False, "message": "playlist recipe must contain a non-empty 'scenes' array"}
+
+    storage = config.get("recipe_storage", {}) or {}
+    default_base = int(storage.get("preset_id_start", 100)) + 10
+    preset_base = int(recipe.get("preset_base", default_base))
+    preset_ids = [preset_base + i for i in range(len(scenes))]
+    if preset_ids[-1] > 250 or preset_ids[0] < 1:
+        return {"success": False,
+                "message": f"场景预设 ID 越界：需要 1..250，当前 {preset_ids[0]}..{preset_ids[-1]}。请调整 preset_base。"}
+
+    loop = recipe.get("loop") or {}
+    repeat = int(loop.get("repeat", 0))
+    trans = loop.get("transition", 20)
+    trans_list = ([int(t) for t in trans] if isinstance(trans, (list, tuple))
+                  else [int(trans)] * len(scenes))
+    while len(trans_list) < len(scenes):
+        trans_list.append(trans_list[-1])
+    durations = [int(s.get("duration", 120)) for s in scenes]  # tenths of a second
+    total_sec = sum(durations) / 10.0
+    global_bri = int(recipe.get("bri", 220))
+
+    playlist_cfg = {"ps": preset_ids, "dur": durations, "transition": trans_list[:len(scenes)],
+                    "repeat": repeat}
+
+    if dry_run:
+        return {
+            "success": True,
+            "dry_run": True,
+            "ip": ip,
+            "type": "playlist",
+            "recipe_name": recipe.get("name", "unnamed"),
+            "preset_ids": preset_ids,
+            "durations_tenths": durations,
+            "total_seconds": total_sec,
+            "repeat": repeat,
+            "loop_forever": repeat == 0,
+            "scenes": [{"name": s.get("name", f"scene{i+1}"), "preset_id": preset_ids[i],
+                        "duration_s": durations[i] / 10.0} for i, s in enumerate(scenes)],
+            "playlist": playlist_cfg,
+            "message": (f"Would save {len(scenes)} scene presets and load a "
+                        f"{total_sec:.0f}s playlist "
+                        f"({'loop forever' if repeat == 0 else f'{repeat} loops'}) on {ip}")
+        }
+
+    if takeover is None:
+        takeover = (config.get("realtime", {}) or {}).get("takeover", "auto")
+    stop_result = stop_udp_realtime(ip, takeover=takeover)
+
+    device_led_count = get_device_led_count(ip)
+    before_presets = set(_local_list_presets(ip).keys())
+
+    saved_scenes = []
+    for i, scene in enumerate(scenes):
+        pid = preset_ids[i]
+        state = build_scene_state(scene, config, device_led_count, ip=ip)
+        state["psave"] = pid
+        state["n"] = (f"{recipe.get('name', 'recipe')} · {scene.get('name', i + 1)}")[:32]
+        # ib=true forces brightness into the preset; sb=true forces the segment
+        # BOUNDS (start/stop) in. Without sb the four-edge segment layout is not
+        # stored, and recalling the preset collapses it into a single segment
+        # spanning the whole strip — the edges silently disappear.
+        state["ib"] = True
+        state["sb"] = True
+        resp = wled_request(ip, "/json/state", method="POST", data=state)
+
+        persisted = False
+        for _ in range(10):
+            time.sleep(0.25)
+            if str(pid) in _local_list_presets(ip):
+                persisted = True
+                break
+        saved_scenes.append({
+            "name": scene.get("name", f"scene{i+1}"),
+            "preset_id": pid,
+            "duration_s": durations[i] / 10.0,
+            "segments": len([s for s in state["seg"] if s.get("stop", 1) != 0]),
+            "response_ok": "error" not in (resp or {}),
+            "persisted": persisted,
+        })
+
+    playlist_preset_id = recipe.get("playlist_preset_id")
+    playlist_preset_persisted = None
+    if playlist_preset_id:
+        # "o" + "playlist" makes savePreset() take the playlist branch
+        # (presets.cpp: `else { // store playlist ... }`).
+        pl_resp = wled_request(ip, "/json/state", method="POST", data={
+            "psave": int(playlist_preset_id),
+            "o": True,
+            "n": str(recipe.get("name", "playlist"))[:32],
+            "ib": True,
+            "playlist": playlist_cfg,
+        })
+        playlist_preset_persisted = False
+        for _ in range(10):
+            time.sleep(0.25)
+            if str(playlist_preset_id) in _local_list_presets(ip):
+                playlist_preset_persisted = True
+                break
+        if "error" in (pl_resp or {}):
+            playlist_preset_persisted = False
+
+    # (Re)start the playlist — loadPlaylist() is triggered by the "playlist" key.
+    load = wled_request(ip, "/json/state", method="POST",
+                        data={"on": True, "bri": global_bri, "playlist": playlist_cfg})
+
+    time.sleep(1.2)
+    verify = wled_request(ip, "/json/state", method="GET")
+    verify_info = wled_request(ip, "/json/info", method="GET", timeout=3)
+    verify_fps = (verify_info.get("leds") or {}).get("fps") if isinstance(verify_info, dict) else None
+    seg_now = verify.get("seg", []) if isinstance(verify, dict) else []
+    live_segs = [s for s in seg_now if s.get("len", 0) > 0]
+    current_fx = [s.get("fx") for s in live_segs]
+    total_len = sum(int(s.get("len", 0)) for s in live_segs)
+
+    # Persistence re-check. A recipe can apply cleanly and then be replaced a few
+    # seconds later by ANOTHER controller on the same LAN: a second WLED
+    # broadcasting its state over UDP sync (if.sync.recv), or a screen-sync box
+    # posting state. Measured on 192.168.2.9: fx 46 -> 0 and col -> (0,0,0) about
+    # 18 s after a successful write, i.e. the strip ended up BLACK while every
+    # earlier check said success. Re-read after a delay so "applied" cannot be
+    # reported for a state that no longer exists.
+    time.sleep(5.5)
+    late = wled_request(ip, "/json/state", method="GET")
+    late_segs = [s for s in (late.get("seg") or []) if s.get("len", 0) > 0]
+    late_len = sum(int(s.get("len", 0)) for s in late_segs)
+    late_fx = [s.get("fx") for s in late_segs]
+    state_survived = bool(late_segs) and late_fx == current_fx and late_len == total_len
+
+    # Colour sanity: structure can be right while the COLOURS silently failed.
+    # Measured failure: a flat [r,g,b] in "col" is read as three Kelvin values
+    # (colorKtoRGB(205) = deep red), so all 28 bands came out pure red, the strip
+    # looked frozen, and every structural check still passed. Compare what is on
+    # the strip against the colours the frames actually ask for.
+    try:
+        palette = []
+        for _sc in scenes:
+            for _s in build_segments(_sc, config, device_led_count):
+                # build_segments() normalises col to [[r,g,b],[r,g,b],[r,g,b]];
+                # collect all three, not the whole nested list, or the distance
+                # math below compares an int against a list.
+                for _c in _s["col"]:
+                    palette.append(tuple(int(v) for v in _c[:3]))
+    except Exception:
+        palette = []
+    live_cols = [tuple(int(v) for v in (s.get("col") or [[0, 0, 0]])[0][:3])
+                 for s in late_segs]
+    flat_strip = len(set(live_cols)) < 3 and len(live_cols) >= 8
+    off_palette = 0.0
+    if palette and live_cols:
+        off_palette = sum(
+            min(sum(abs(c[i] - p[i]) for i in range(3)) for p in palette) for c in live_cols
+        ) / float(len(live_cols))
+    colour_ok = bool(palette) and not flat_strip and off_palette <= 90.0
+
+    warnings = []
+    if flat_strip:
+        warnings.append(
+            "灯带的 %d 个分段只有 %d 种颜色，画面是单色静止的——帧颜色没有生效"
+            "（常见原因：col 写成扁平 [r,g,b]，被 WLED 当成色温解析）。"
+            % (len(live_cols), len(set(live_cols))))
+    elif palette and off_palette > 90.0:
+        warnings.append("灯带上的颜色与配方色板差距过大（平均偏离 %.0f/255），请检查写入结果。" % off_palette)
+    if not state_survived:
+        warnings.append(
+            "效果落地约 7 秒后被改写：写入时 %d 段 fx=%s，现在 %d 段 fx=%s。"
+            "局域网内还有别的控制器在抢这条灯带（另一台 WLED 的 UDP 同步/屏幕同步盒子/"
+            "Home Assistant）。请关掉它的同步接收或让它改到不同同步组，否则灯带会随时被改回。"
+            % (len(live_segs), current_fx, len(late_segs), late_fx))
+    sync_info = stop_result.get("udp_sync") or {}
+    if sync_info.get("suppressed"):
+        warnings.append("已临时关闭本机的 UDP 同步接收（%s），--release 时会原样恢复。"
+                        % "、".join(sync_info.get("active_keys") or []))
+    if stop_result.get("contested"):
+        warnings.append("外部实时流仍在推送且未接管优先级（takeover=off），播放列表可能被外部画面覆盖。")
+    elif stop_result.get("override_engaged"):
+        warnings.append("已用 lor=2 抢占实时优先级：外部推送在此期间被丢弃。"
+                        "不需要时请执行 apply_recipe.py --release 交还。")
+    dropped = [s["name"] for s in saved_scenes if not s["persisted"]]
+    if dropped:
+        warnings.append("以下场景预设未能写入 /presets.json（可能被实时流丢弃）：" + "、".join(dropped))
+    if verify_fps is not None and verify_fps < 5 and not stop_result.get("override_engaged"):
+        warnings.append("设备帧率仅 %s fps，效果引擎可能未在渲染灯带。" % verify_fps)
+    if device_led_count and total_len and total_len < device_led_count:
+        warnings.append("当前分段只覆盖 %d/%d 颗灯珠，有灯珠未被点亮。" % (total_len, device_led_count))
+    first_scene_segs = saved_scenes[0]["segments"] if saved_scenes else 0
+    if first_scene_segs and len(live_segs) < first_scene_segs:
+        warnings.append(
+            "播放列表回放场景 %d 后只剩 %d 段（应有 %d 段）——检查预设是否带上了段边界 sb=true。"
+            % (preset_ids[0], len(live_segs), first_scene_segs))
+    if repeat != 0:
+        warnings.append("loop.repeat=%d 不是无限循环，播放结束后会自动停止。" % repeat)
+
+    result = {
+        "success": ("error" not in load and all(s["persisted"] for s in saved_scenes)
+                    and state_survived and colour_ok),
+        "type": "playlist",
+        "ip": ip,
+        "recipe_name": recipe.get("name", "unnamed"),
+        "preset_ids": preset_ids,
+        "playlist_preset_id": playlist_preset_id,
+        "playlist_preset_persisted": playlist_preset_persisted,
+        "scenes": saved_scenes,
+        "total_seconds": total_sec,
+        "loop_forever": repeat == 0,
+        "realtime": stop_result,
+        "state_survived": state_survived,
+        "colour_ok": colour_ok,
+        "applied": load,
+        "verified_state": {
+            "on": verify.get("on"),
+            "bri": verify.get("bri"),
+            "ps": verify.get("ps"),
+            "pl": verify.get("pl"),
+            "live": verify.get("live"),
+            "lor": verify.get("lor"),
+            "fps": verify_fps,
+            "seg_count": len(live_segs),
+            "leds_covered": total_len,
+            "device_leds": device_led_count,
+            "current_fx": current_fx,
+            "recheck_after_s": 6.7,
+            "recheck_seg_count": len(late_segs),
+            "recheck_leds_covered": late_len,
+            "recheck_fx": late_fx,
+        },
+        "message": (f"播放列表 '{recipe.get('name', 'unnamed')}' 已应用：{len(scenes)} 个场景、"
+                    f"{total_sec:.0f} 秒一轮、{'无限循环' if repeat == 0 else '循环 %d 次' % repeat}"),
+    }
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
+def apply_recipe(recipe, dry_run=False, takeover=None):
+    """Apply recipe to WLED device.
+
+    A recipe containing a non-empty "scenes" array — or a "model" block (frames
+    are then compiled here, see build_keyframe_animation.py) — is treated as a
+    multi-scene looping recipe and routed to apply_playlist_recipe().
+
+    takeover: "auto" | "on" | "off" — how hard to fight for the strip when an
+    external realtime stream would otherwise keep ownership. None (default) reads
+    `config.realtime.takeover`, falling back to "auto".
+    """
+    if recipe.get("scenes") or recipe.get("model"):
+        return apply_playlist_recipe(recipe, dry_run=dry_run, takeover=takeover)
+
     config = load_config()
     ip = get_wled_ip()
 
@@ -247,6 +1008,22 @@ def apply_recipe(recipe, dry_run=False):
             "success": False,
             "message": "WLED IP not configured. Please run: python3 scripts/discover_wled.py  or set ip in config.json"
         }
+
+    # Write guard: refuse to touch the device unless the office-mode switch is on.
+    # (dry-run never writes, so it stays available for previewing.)
+    if not dry_run:
+        try:
+            from guard import require_write
+        except ImportError:
+            return {
+                "success": False,
+                "blocked": True,
+                "reason": "guard_missing",
+                "message": "写入守卫 scripts/guard.py 缺失，已拒绝写入。请重新安装本技能。",
+            }
+        blocked = require_write(config=config, action="apply_recipe")
+        if blocked:
+            return blocked
 
     # Validate recipe
     if not recipe.get("colors") and not recipe.get("fx"):
@@ -279,30 +1056,62 @@ def apply_recipe(recipe, dry_run=False):
             "message": f"Would apply recipe '{recipe.get('name', 'unnamed')}' to {ip} with {len(segments)} segment(s)"
         }
 
-    # Step 1: Stop UDP realtime mode
-    stop_result = stop_udp_realtime(ip)
+    # Step 1: stop realtime / take the realtime override if a stream is live
+    if takeover is None:
+        takeover = (config.get("realtime", {}) or {}).get("takeover", "auto")
+    stop_result = stop_udp_realtime(ip, takeover=takeover)
+
+    # Step 1b: wipe segments left behind by a previous recipe, or they keep
+    # rendering on top of this one (see clear_stale_segments docstring).
+    state_patch["seg"] = clear_stale_segments(ip, segments)
 
     # Step 2: Apply state
     apply_result = wled_request(ip, "/json/state", method="POST", data=state_patch)
 
-    # Step 3: Verify by reading state
+    # Step 3: Verify by reading state (fps tells us whether our effect engine
+    # actually owns the strip, or whether live data is still painting it)
+    time.sleep(0.5)
     verify = wled_request(ip, "/json/state", method="GET")
+    verify_info = wled_request(ip, "/json/info", method="GET", timeout=3)
+    verify_fps = (verify_info.get("leds") or {}).get("fps") if isinstance(verify_info, dict) else None
 
-    return {
+    warnings = []
+    if stop_result.get("contested"):
+        warnings.append(
+            "外部实时流仍在推送且未接管优先级（takeover=off），"
+            "灯带可能显示的是外部画面而不是本配方。"
+        )
+    elif stop_result.get("override_engaged"):
+        warnings.append(
+            "已用 lor=2 抢占实时优先级：外部推送（如屏幕同步）在此期间被丢弃。"
+            "不需要时请执行 apply_recipe.py --release 或用 release_realtime_override() 交还。"
+        )
+    if verify_fps is not None and verify_fps < 5 and not stop_result.get("override_engaged"):
+        warnings.append(
+            "设备帧率仅 %s fps，效果引擎可能未在渲染灯带（疑似仍被实时数据占用）。" % verify_fps
+        )
+
+    result = {
         "success": "error" not in apply_result,
         "ip": ip,
         "recipe_name": recipe.get("name", "unnamed"),
         "segment_count": len(segments),
         "applied": apply_result,
+        "realtime": stop_result,
         "verified_state": {
             "on": verify.get("on"),
             "bri": verify.get("bri"),
             "live": verify.get("live"),
+            "lor": verify.get("lor"),
+            "fps": verify_fps,
             "mainseg": verify.get("mainseg"),
             "seg_count": len([s for s in verify.get("seg", []) if s.get("len", 0) > 0])
         },
         "message": f"Recipe '{recipe.get('name', 'unnamed')}' applied to WLED at {ip} ({len(segments)} segments)"
     }
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def main():
@@ -310,13 +1119,53 @@ def main():
         print(__doc__)
         sys.exit(0)
 
+    # --stop ends a looping recipe ("对豆包说结束" / manual stop in the WLED app).
+    # Writing seg[0].fx with no "ps" trips json.cpp `if (!presetId &&
+    # currentPlaylist>=0) unloadPlaylist();` which actually UNLOADS the queue —
+    # merely setting on:false would leave the playlist ticking underneath.
+    if "--stop" in sys.argv:
+        ip = get_wled_ip()
+        if not ip:
+            print(json.dumps({"success": False, "message": "WLED IP not configured"}, ensure_ascii=False))
+            sys.exit(1)
+        resp = wled_request(ip, "/json/state", method="POST", data={"on": False, "seg": [{"fx": 0}]})
+        time.sleep(0.5)
+        state = wled_request(ip, "/json/state", method="GET")
+        print(json.dumps({
+            "success": "error" not in (resp or {}),
+            "stopped": True,
+            "playlist_unloaded": True,
+            "state": {"on": state.get("on"), "bri": state.get("bri"), "fx": (state.get("seg") or [{}])[0].get("fx")},
+            "message": "已停止播放列表并关灯；再次执行配方即可重新开始循环。",
+        }, indent=2, ensure_ascii=False))
+        sys.exit(0)
+
+    # --release hands the strip back to whatever was streaming before
+    if "--release" in sys.argv:
+        ip = get_wled_ip()
+        if not ip:
+            print(json.dumps({"success": False, "message": "WLED IP not configured"}, ensure_ascii=False))
+            sys.exit(1)
+        print(json.dumps({"success": True, "released": True, "state": release_realtime_override(ip)},
+                         indent=2, ensure_ascii=False))
+        sys.exit(0)
+
     dry_run = "--dry-run" in sys.argv
     use_stdin = "--stdin" in sys.argv
+
+    takeover = "auto"
+    if "--takeover" in sys.argv:
+        idx = sys.argv.index("--takeover")
+        if idx + 1 < len(sys.argv):
+            takeover = sys.argv[idx + 1]
+        if takeover not in ("auto", "on", "off"):
+            print(json.dumps({"success": False, "message": "--takeover must be auto|on|off"}, ensure_ascii=False))
+            sys.exit(1)
 
     if use_stdin:
         recipe_str = sys.stdin.read()
     elif len(sys.argv) < 2 or sys.argv[1].startswith("--"):
-        print(json.dumps({"success": False, "message": "Usage: apply_recipe.py <recipe_json_file> [--dry-run] [--stdin]"}, ensure_ascii=False))
+        print(json.dumps({"success": False, "message": "Usage: apply_recipe.py <recipe_json_file> [--dry-run] [--stdin] [--takeover auto|on|off] [--release] [--stop]"}, ensure_ascii=False))
         sys.exit(1)
     else:
         recipe_file = sys.argv[1]
@@ -332,7 +1181,7 @@ def main():
         print(json.dumps({"success": False, "message": f"Invalid JSON: {e}"}, ensure_ascii=False))
         sys.exit(1)
 
-    result = apply_recipe(recipe, dry_run=dry_run)
+    result = apply_recipe(recipe, dry_run=dry_run, takeover=takeover)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     sys.exit(0 if result.get("success") else 1)
 

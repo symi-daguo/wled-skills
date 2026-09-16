@@ -32,7 +32,8 @@
     "custom_palette_id_start": 0,
     "custom_palette_id_end": 9,
     "export_dir": "recipes",
-    "naming_pattern": "{scene}_{timestamp}.json"
+    "naming_pattern": "{scene}_{timestamp}.json",
+    "note": "custom_palette_id_* refer to /palette{N}.json FILE indexes, not runtime palette IDs. On WLED 16.x the runtime ID is 200-N (built-ins occupy 0-71, custom 72-200). Scripts convert for you."
   },
   "color_analysis": {
     "method": "kmeans",
@@ -60,5 +61,27 @@
     "push_dir": "/sdcard/Pictures/wled_recipe",
     "enabled": false,
     "note": "Optional: ADB device address for pushing recipe images to screen (e.g. Android TV, amplifier with screen). Set device to '192.168.2.43:5555' format. Leave empty to open images locally instead."
+  },
+  "safety": {
+    "allow_write": false,
+    "require_office_mode": true,
+    "note": "写入门禁。真正写入局域网 WLED 前，必须先让用户确认处于豆包『办公模式（办公任务）』，再执行 python3 scripts/guard.py --enable --confirm-office-mode。默认 false=锁定。"
+  },
+  "video": {
+    "source": "doubao_builtin",
+    "frames": 8,
+    "mode": "scene",
+    "edge_band_ratio": 0.12,
+    "palette_id": 1,
+    "note": "视频取色。frames=抽取关键帧数(6-10较合适)；mode=scene(按画面切换)或 even(均匀)；edge_band_ratio=四边色带高度比例；palette_id=/palette{N}.json 文件索引(需重启 WLED 才在 ID 200-N 上可见；视频配方默认用每段 col 直写，不依赖它)。"
+  },
+  "realtime": {
+    "takeover": "auto",
+    "note": "外部实时流(屏幕同步软件等)冲突时的默认策略。auto=先退出实时模式，抢不回来才用 lor=2 优先级接管；on=总是接管；off=不接管(只提示)。覆写：--takeover auto|on|off。交还控制权：python3 scripts/apply_recipe.py --release"
+  },
+  "sync": {
+    "enabled": false,
+    "group": 1,
+    "note": "WLED 主从同步。group 为组位掩码(1=第1组)。需同时写 if.sync.send.en 和运行时 state.udpn.send，两者都为真才会真正广播(见 sync_devices.py --setup)。从设备会开启 recv.seg/recv.sb，否则四段式光配方会退化成整条同色。所有设备需相同 WLED 版本，否则同步包里的 FX id 会错位。"
   }
 }

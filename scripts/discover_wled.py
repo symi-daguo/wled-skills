@@ -241,6 +241,32 @@ def discover(force=False, health_only=False):
     }
 
 
+def resolve_ip():
+    """Return a *verified* WLED IP, or "" when nothing is reachable.
+
+    Single source of truth for every script that needs to talk to a device.
+    The cached IP is health-checked before it is trusted, then config -> mDNS
+    -> LAN scan are tried in order.
+
+    Do NOT reintroduce a "read .wled_cache.json and return it" shortcut here:
+    that bug silently pointed writes at an offline device after the DHCP lease
+    moved (cache said 192.168.2.66, the device was actually on 192.168.2.9).
+    """
+    try:
+        result = discover()
+        if result.get("success") and result.get("ip"):
+            return result["ip"]
+    except Exception:
+        pass
+    # Discovery exhausted (cache stale + config/mDNS/scan all failed).
+    # Still hand back the configured IP so the caller can surface a real
+    # connection error instead of an empty-string "not configured" message.
+    try:
+        return load_config().get("wled", {}).get("ip", "") or ""
+    except Exception:
+        return ""
+
+
 def _summarize_info(info):
     """Extract key info from WLED /json/info response."""
     if not info:

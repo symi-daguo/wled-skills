@@ -23,19 +23,19 @@ SKILL_DIR = os.path.dirname(SCRIPT_DIR)
 
 
 def get_wled_ip():
-    """Get WLED IP from cache or config. Returns empty string if not found."""
-    cache_path = os.path.join(SCRIPT_DIR, ".wled_cache.json")
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r") as f:
-                cache = json.load(f)
-                if cache.get("ip"):
-                    return cache["ip"]
-        except Exception:
-            pass
-    config_path = os.path.join(SKILL_DIR, "config.json")
-    with open(config_path, "r") as f:
-        return json.load(f).get("wled", {}).get("ip", "")
+    """Health-checked WLED IP via discover_wled.resolve_ip().
+
+    The raw .wled_cache.json is deliberately NOT read here: a stale cache used
+    to be returned unverified, which sent writes to an offline device.
+    """
+    try:
+        if SCRIPT_DIR not in sys.path:
+            sys.path.insert(0, SCRIPT_DIR)
+        import discover_wled
+        return discover_wled.resolve_ip()
+    except Exception:
+        with open(os.path.join(SKILL_DIR, "config.json"), "r", encoding="utf-8") as f:
+            return json.load(f).get("wled", {}).get("ip", "")
 
 
 def wled_request(ip, path, method="GET", data=None, timeout=5):
@@ -86,13 +86,17 @@ def import_recipe(recipe_file, save_preset_name=None, skip_palette=False, dry_ru
     preset_id_start = storage_cfg.get("preset_id_start", 100)
     preset_id_end = storage_cfg.get("preset_id_end", 250)
 
-    # Step 1: Upload custom palette (if palette_data exists, optional - apply_recipe uses col array directly)
-    palette_id = 0
+    # Step 1: Upload custom palette (optional - apply_recipe writes col directly)
+    # Use the same /palette{N}.json file the recipe was created with, so a
+    # re-import does not scatter extra custom palettes through device flash.
+    palette_file_index = recipe.get("palette_file_index")
+    if palette_file_index is None:
+        palette_file_index = int((config.get("video", {}) or {}).get("palette_id", 1))
     if not skip_palette and recipe.get("palette_data"):
         sys.path.insert(0, SCRIPT_DIR)
         try:
             from upload_palette import upload_palette
-            pal_result = upload_palette(palette_id, recipe["palette_data"])
+            pal_result = upload_palette(palette_file_index, recipe["palette_data"])
             steps.append({"step": "upload_palette", "result": pal_result})
             if not pal_result.get("success"):
                 # Non-fatal: continue without custom palette (apply_recipe uses col array)

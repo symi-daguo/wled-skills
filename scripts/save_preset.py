@@ -17,6 +17,7 @@ Output: JSON with {success, preset_id, name, message}
 import json
 import os
 import sys
+import time
 import urllib.request
 import urllib.error
 
@@ -30,19 +31,18 @@ def load_config():
 
 
 def get_wled_ip():
-    """Get WLED IP from cache or config. Returns empty string if not found."""
-    cache_path = os.path.join(SCRIPT_DIR, ".wled_cache.json")
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r") as f:
-                cache = json.load(f)
-                if cache.get("ip"):
-                    return cache["ip"]
-        except Exception:
-            pass
-    config = load_config()
-    ip = config.get("wled", {}).get("ip", "")
-    return ip
+    """Health-checked WLED IP via discover_wled.resolve_ip().
+
+    The raw .wled_cache.json is deliberately NOT read here: a stale cache used
+    to be returned unverified, which sent writes to an offline device.
+    """
+    try:
+        if SCRIPT_DIR not in sys.path:
+            sys.path.insert(0, SCRIPT_DIR)
+        import discover_wled
+        return discover_wled.resolve_ip()
+    except Exception:
+        return load_config().get("wled", {}).get("ip", "")
 
 
 def wled_request(ip, path, method="GET", data=None, timeout=5):
@@ -93,10 +93,44 @@ def find_free_preset_id(ip, id_start=100, id_end=250):
 
 
 def save_preset(preset_id, name):
-    """Save current WLED state as a preset."""
+    """Save current WLED state as a preset.
+
+    Two traps this function exists to survive, both measured on WLED 16.0.1:
+
+    1. POST {"psave": N} is answered with {"success": true} even when nothing is
+       written. It only queues `presetToSave`; the actual file write happens in
+       handlePresets() -> doSaveState() on a later main-loop pass.
+    2. That main-loop block is skipped entirely while realtimeMode is set
+       (wled.cpp:131), so with a screen-sync stream running the preset is
+       silently thrown away - possibly minutes later, when the queue finally
+       flushes and writes whatever state exists *then*.
+
+    So: take control of the strip first (exit realtime, and seize the realtime
+    override when a stream insists on staying), then poll /presets.json until
+    the entry really exists, and report success only if it does.
+    """
     ip = get_wled_ip()
     if not ip:
         return {"success": False, "message": "WLED IP not configured. Run discover_wled.py first or set ip in config.json"}
+
+    # Write guard: presets are device writes.
+    try:
+        from guard import require_write
+    except ImportError:
+        return {"success": False, "blocked": True, "reason": "guard_missing",
+                "message": "写入守卫 scripts/guard.py 缺失，已拒绝写入。"}
+    blocked = require_write(action="save_preset")
+    if blocked:
+        return blocked
+
+    # Realtime must be cleared or the save is queued and never flushed.
+    realtime = None
+    try:
+        sys.path.insert(0, SCRIPT_DIR)
+        from apply_recipe import stop_udp_realtime
+        realtime = stop_udp_realtime(ip)
+    except Exception as exc:
+        realtime = {"success": False, "message": "realtime takeover skipped: %s" % exc}
 
     # WLED API: POST /json/state {"psave": <id>, "n": "<name>"}
     state = {"psave": preset_id}
@@ -105,20 +139,32 @@ def save_preset(preset_id, name):
 
     result = wled_request(ip, "/json/state", method="POST", data=state)
 
-    # Verify by reading presets
-    verify = list_presets(ip)
+    # The response is not trustworthy (see docstring) - poll the file instead.
     saved_ok = False
-    if isinstance(verify, dict):
-        saved_ok = str(preset_id) in verify
+    for _ in range(10):
+        time.sleep(0.3)
+        verify = list_presets(ip)
+        if isinstance(verify, dict) and str(preset_id) in verify:
+            saved_ok = True
+            break
 
-    return {
-        "success": "error" not in result,
+    out = {
+        "success": ("error" not in result) and saved_ok,
         "preset_id": preset_id,
         "name": name,
         "wled_response": result,
         "verified": saved_ok,
-        "message": f"Preset saved as ID {preset_id} '{name}'" if "error" not in result else f"Failed: {result.get('error')}"
+        "realtime": realtime,
+        "message": (f"Preset saved as ID {preset_id} '{name}'" if saved_ok
+                    else f"Preset {preset_id} was NOT persisted to /presets.json "
+                         f"(device answered {'error' if 'error' in result else 'success'} but the file has no such entry)")
     }
+    if not saved_ok:
+        out["success"] = False
+        if isinstance(realtime, dict) and realtime.get("contested"):
+            out["reason"] = "realtime_contested"
+            out["message"] += " — 设备正被外部实时流占用且未接管优先级，预设保存会被丢弃。"
+    return out
 
 
 def main():

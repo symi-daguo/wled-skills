@@ -29,17 +29,18 @@ def load_config():
 
 
 def get_wled_ip():
-    """Get WLED IP from cache or config. Returns empty string if not found."""
-    cache_path = os.path.join(SCRIPT_DIR, ".wled_cache.json")
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r") as f:
-                cache = json.load(f)
-                if cache.get("ip"):
-                    return cache["ip"]
-        except Exception:
-            pass
-    return load_config().get("wled", {}).get("ip", "")
+    """Health-checked WLED IP via discover_wled.resolve_ip().
+
+    The raw .wled_cache.json is deliberately NOT read here: a stale cache used
+    to be returned unverified, which sent writes to an offline device.
+    """
+    try:
+        if SCRIPT_DIR not in sys.path:
+            sys.path.insert(0, SCRIPT_DIR)
+        import discover_wled
+        return discover_wled.resolve_ip()
+    except Exception:
+        return load_config().get("wled", {}).get("ip", "")
 
 
 def upload_palette_file(ip, palette_id, palette_data):
@@ -111,6 +112,16 @@ def upload_palette(palette_id, palette_data):
     if not ip:
         return {"success": False, "message": "WLED IP not configured. Run discover_wled.py first or set ip in config.json"}
 
+    # Write guard: uploading a palette is a device write.
+    try:
+        from guard import require_write
+    except ImportError:
+        return {"success": False, "blocked": True, "reason": "guard_missing",
+                "message": "写入守卫 scripts/guard.py 缺失，已拒绝写入。"}
+    blocked = require_write(action="upload_palette")
+    if blocked:
+        return blocked
+
     # Validate palette_id range
     config = load_config()
     storage = config.get("recipe_storage", {})
@@ -133,9 +144,17 @@ def upload_palette(palette_id, palette_data):
         "palette_file": f"palette{palette_id}.json",
         "ip": ip,
         "upload_result": result,
-        "usage_hint": f"To use this palette, set segment 'pal' to custom palette index {palette_id} (displayed as '~ Custom {palette_id} ~' after WLED reboot)",
-        "note": "WLED may need a reboot to recognize the new palette. Use 'reboot' command or power cycle. NOTE: apply_recipe.py uses col array directly, so palette upload is optional.",
-        "message": f"Custom palette {palette_id} uploaded to WLED at {ip}" if result.get("success") else f"Upload failed: {result.get('error', 'unknown')}"
+        "usage_hint": (
+            f"/palette{palette_id}.json 已写入；在 WLED 16.x 的调色板 ID 空间里"
+            f"它对应运行时 ID 200-{palette_id}={200 - palette_id}（不是 {palette_id}）。"
+            f"段落 pal 必须指向该运行时 ID，且需重启后才会出现在列表里。"
+        ),
+        "note": ("WLED 只在启动时读取 /palette*.json，所以新调色板需重启才可见；"
+                 "apply_recipe.py 默认直接写每段 col，不依赖调色板，因此调色板上传是可选的。"
+                 "内置调色板占 ID 0-71，自定义占 72-200（文件索引 0 -> ID 200，向下增长）。"),
+        "runtime_id": 200 - palette_id,
+        "message": f"自定义调色板文件 palette{palette_id}.json 已上传到 {ip}（运行时 ID {200 - palette_id}）"
+                   if result.get("success") else f"Upload failed: {result.get('error', 'unknown')}"
     }
 
 
