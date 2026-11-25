@@ -37,3 +37,6 @@ recipes/*.json
 # Real photo assets (copyrighted, not for commit)
 assets/test_scenes/*.jpg
 assets/test_scenes/*.png
+
+# 本地配置（含内网 IP），不入库
+config.json

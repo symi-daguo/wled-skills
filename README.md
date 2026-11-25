@@ -228,6 +228,9 @@ A: 将 `recipes/` 目录下的 JSON 文件发送给朋友，朋友导入到自�
 
 ## 版本
 
+- v1.0.7 (2026-11-25): **技能可被 WorkBuddy / 豆包直接读取**（注册为 `~/.workbuddy/skills/wled-light-recipe`，
+  软链回仓库保持单一真源）；新增 Rule 11「测完必须熄灯 + `--release` 归还 UDP 同步接收」；
+  文档补两条灯的现场口径（70 颗 / 490 颗不要混用）；`config.json` 停止入库（含内网 IP，改为 gitignore）
 - v1.0.6 (2026-11-25): 新增**场景配色快速通道** —— 14 组氛围配色内置离线表，
   说一句场景名直接出三色渐变配方（`scripts/scene_palette.py`），走既有下发门禁；
   同时放开 Shimmer 的 `sx=0` 静态档（`_EFFECT_AXIS_EXEMPT` 原先把 0 钳到 40，

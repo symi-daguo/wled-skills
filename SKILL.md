@@ -1,7 +1,7 @@
 ---
 name: wled-light-recipe
 description: WLED智能灯带光配方设计师。支持图片取色与视频取色（截关键帧、取画面四周颜色映射到灯带四段）、生成平顺丝滑且随时间演变的动态灯光效果、按名称复用已创建的光配方，并同步到局域网内多台 WLED（主从同一效果）。写入局域网设备需在豆包办公模式下解锁。当用户需要基于场景的灯光效果（如茉莉花、日落、海洋、某段视频）、WLED控制、光配方、多设备同步时调用此技能。
-version: 1.0.6
+version: 1.0.7
 author: symi-daguo
 category: smart-home
 permissions:
@@ -395,6 +395,45 @@ WLED already solves most of what a recipe needs; prefer it over inventing:
 
 Official docs are mirrored in `references/wled-official/` (18 pages, fetched from
 the `wled/WLED-Docs` repository). Read them instead of guessing.
+
+### Rule 11: ALWAYS leave the strip off and the device released
+
+Every verification spends real light in someone's room. Two mandatory teardown steps,
+in this order, **before you report back**:
+
+```bash
+# 1) 熄灯（不要只靠 release；release 不关灯）
+curl -s -X POST "http://<ip>/json/state" -H "Content-Type: application/json" -d '{"on":false}'
+# 2) 归还被 apply 改过的 UDP 同步接收设置
+python3 scripts/apply_recipe.py --release
+```
+
+Why `--release` is not optional: `apply_recipe.py` **turns off `if.sync.recv`
+(bri/col/fx/pal) on the device** so a neighbouring WLED cannot overwrite the effect
+you are testing. Leaving it off silently breaks the customer's master/slave sync.
+`--release` restores the exact previous values from `scripts/.wled_net_backup.json`.
+
+Also: `{"on":false}` is not enough on its own if the strip was in realtime mode — send
+`{"live":false}` too, otherwise the last pushed frame stays latched.
+
+## LAN device facts (do not mix them up)
+
+The lab currently has **two** WLED strips, and they are *different products*:
+
+| Strip | LED count | Which recipes apply |
+|---|---|---|
+| 70 LEDs (`wled-772980`) | 70 | the default `layout.total_leds` in `config.json`; every template in `references/` assumes this |
+| 490 LEDs | 490 | pass `--leds 490` explicitly; **do not** run the 70-LED templates against it |
+
+Rules that follow from that:
+
+1. **Resolve the target before writing** — `python3 scripts/discover_wled.py` prints the
+   IP it will use. If the recipe's LED count ≠ the device's `info.leds.count`, stop:
+   you are pointing at the wrong strip.
+2. **Never assume a stale IP.** Discovered IPs live in `scripts/.wled_cache.json` (gitignored);
+   `config.json` is local-only and gitignored too — no internal IP ever goes into the repo.
+3. **Multi-device sync is opt-in.** `sync_devices.py --ips a,b` is the only thing that
+   should touch `if.sync.*`; don't hand-write it while testing a single strip.
 
 ## Prerequisites
 
