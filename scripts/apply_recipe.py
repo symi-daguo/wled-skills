@@ -72,12 +72,22 @@ def load_config():
         return json.load(f)
 
 
+# Set from CLI `--ip`. The lab has more than one strip, and discovery always returns
+# whichever one happens to be cached -- without this, a 490-LED recipe could be written
+# to the 70-LED strip (and be rejected with "范围 0-490 非法"). Letting the caller pin
+# the target is the only way to keep multi-strip writes honest.
+_IP_OVERRIDE = ""
+
+
 def get_wled_ip():
     """Health-checked WLED IP via discover_wled.resolve_ip().
 
     The raw .wled_cache.json is deliberately NOT read here: a stale cache used
     to be returned unverified, which sent writes to an offline device.
+    An explicit `--ip` always wins.
     """
+    if _IP_OVERRIDE:
+        return _IP_OVERRIDE
     try:
         if SCRIPT_DIR not in sys.path:
             sys.path.insert(0, SCRIPT_DIR)
@@ -402,8 +412,17 @@ def build_segments(recipe, config, device_led_count=0):
     layout = config.get("layout", {})
     layout_type = layout.get("type", "linear")
     config_leds = layout.get("total_leds", 0)
-    # Prefer config value, fallback to device-reported count, finally default 60
-    total_leds = config_leds if config_leds > 0 else (device_led_count if device_led_count > 0 else 60)
+    # The DEVICE is the truth, not config.json. config used to win, which made the
+    # skill 70-LED-only: a 490-LED recipe was rejected with "范围 0-490 非法（灯珠总数
+    # 70）" and the strip stayed dark. Config is now only a fallback for when the
+    # device cannot be read, and a mismatch is reported instead of silently applied.
+    if device_led_count > 0:
+        total_leds = device_led_count
+        if config_leds > 0 and config_leds != device_led_count:
+            _clamp_warnings.append(
+                f"config.layout.total_leds={config_leds} 与设备实际 {device_led_count} 不一致，已按设备为准")
+    else:
+        total_leds = config_leds if config_leds > 0 else 60
 
     colors = recipe.get("colors", [[128, 128, 128]])
 
@@ -1164,6 +1183,15 @@ def main():
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__)
         sys.exit(0)
+
+    # --ip <addr> pins the target strip. It has to be applied before ANY branch below
+    # reaches get_wled_ip() (--stop / --release / --apply all do), otherwise a
+    # multi-strip lab silently writes to whichever device discovery happened to cache.
+    global _IP_OVERRIDE
+    if "--ip" in sys.argv:
+        idx = sys.argv.index("--ip")
+        if idx + 1 < len(sys.argv):
+            _IP_OVERRIDE = sys.argv[idx + 1].strip()
 
     # --stop ends a looping recipe ("对豆包说结束" / manual stop in the WLED app).
     # Writing seg[0].fx with no "ps" trips json.cpp `if (!presetId &&

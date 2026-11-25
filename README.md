@@ -228,6 +228,11 @@ A: 将 `recipes/` 目录下的 JSON 文件发送给朋友，朋友导入到自�
 
 ## 版本
 
+- v1.0.8 (2026-11-25): **全类型 WLED 自适应** —— 按固件上报的 `info.leds.lc` 能力位
+  （`0x01`=RGB / `0x02`=W / `0x04`=CCT）决定出码形状，主推 WS2805 五色自动拆白并带 `cct`，
+  WS2815/PWM 等纯 RGB 灯带走 3 通道；`apply_recipe.py` 新增 `--ip` 指定目标灯带、
+  并改为**以设备实际灯数为准**（原先 config 的 70 压过设备，490 颗的配方会被判非法）；
+  `scene_palette.py` 新增 `--probe` / `--ip` / `--off`，灯数与设备不符时拒绝下发
 - v1.0.7 (2026-11-25): **技能可被 WorkBuddy / 豆包直接读取**（注册为 `~/.workbuddy/skills/wled-light-recipe`，
   软链回仓库保持单一真源）；新增 Rule 11「测完必须熄灯 + `--release` 归还 UDP 同步接收」；
   文档补两条灯的现场口径（70 颗 / 490 颗不要混用）；`config.json` 停止入库（含内网 IP，改为 gitignore）
