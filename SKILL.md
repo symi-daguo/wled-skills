@@ -1,7 +1,7 @@
 ---
 name: wled-light-recipe
 description: WLED智能灯带光配方设计师。支持图片取色与视频取色（截关键帧、取画面四周颜色映射到灯带四段）、生成平顺丝滑且随时间演变的动态灯光效果、按名称复用已创建的光配方，并同步到局域网内多台 WLED（主从同一效果）。写入局域网设备需在豆包办公模式下解锁。当用户需要基于场景的灯光效果（如茉莉花、日落、海洋、某段视频）、WLED控制、光配方、多设备同步时调用此技能。
-version: 1.0.5
+version: 1.0.6
 author: symi-daguo
 category: smart-home
 permissions:
@@ -126,6 +126,36 @@ Dominant theme is determined by averaging hue values weighted by ratio:
 - IX (Intensity) = 100: Subtle, balanced (range 80-120, NEVER > 150)
 - BRI (Brightness) = 180: Comfortable (range 150-200)
 - These values are verified on real WLED 17.0.0-devV5 to produce smooth, non-flashing animation
+
+## Static Ambient Scenes (scene name -> palette, fastest path)
+
+When the user asks for a **static mood colour** ("来个热带海岸"、"樱花那种粉"、"生日温馨点的灯"),
+do NOT go through image search or a 1-minute playlist. This is a **static ambient scene**,
+not a dynamic recipe:
+
+```bash
+python3 scripts/scene_palette.py --list                      # 14 curated scenes
+python3 scripts/scene_palette.py "热带海岸"                   # recipe JSON on stdout
+python3 scripts/scene_palette.py "海边日落" --emit state      # directly POST-able /json/state
+python3 scripts/scene_palette.py "樱花" --bri 180 --apply      # build + push to the LAN device
+```
+
+Read `references/scene-palettes.md` before changing anything in that path. Three facts it
+records that are easy to get wrong:
+
+1. **`pal 4` = `(ter, sec, prim)`** — the gradient runs `col[2] -> col[1] -> col[0]`, so the
+   START colour goes in `col[2]`, not `col[0]`.
+2. **`fx 161` (Shimmer) with `sx=0` is the only truly static full-strip gradient.** `FX.cpp`
+   locks `position = (SEGLEN << 7)` when speed is 0, and it samples
+   `color_from_palette(i*255/SEGLEN)`, i.e. the whole palette across the strip. `Gradient`
+   (fx 46) keeps advancing its phase even at `sx=0`.
+3. **`c1` must be 255** (`radius ≈ 2*SEGLEN`) so the whole strip stays inside the band and
+   the ends only blend ~25% toward `col[1]`.
+
+`scene_palette.py` emits a **flat recipe with an explicit `segments` list**, so it flows
+through the same `apply_recipe.py` gate as every other recipe (clamp, stale-segment
+cleanup, `clamp_warnings`, `/presets.json` verification). Do not write `/json/state`
+directly when `--apply` is available.
 
 ## Dynamic Animation Strategy (1-Minute Loop)
 

@@ -326,7 +326,10 @@ def get_device_led_count(ip):
 # continuous noise field — neither can strobe, so the anti-flash clamp does not
 # apply to them.
 _EFFECT_AXIS_EXEMPT = {
-    161: {"sx": (40, 200), "ix": (0, 120)},    # Shimmer
+    # sx = 0 is a documented static mode for Shimmer (`FX.cpp`: `else { position =
+    # (SEGLEN << 7); }`), used by the static scene-palette recipes. Clamping it up
+    # to 40 would silently re-animate a "still" gradient.
+    161: {"sx": (0, 200), "ix": (0, 120)},    # Shimmer
     101: {"sx": (20, 200), "ix": (100, 200)},  # Pacifica
 }
 
