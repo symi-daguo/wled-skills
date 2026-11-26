@@ -21,6 +21,24 @@ Most WLED skills on GitHub are thin HTTP wrappers (`power on`, `color 255 0 0`,
 | **Pixel-level verification** | Reads the real frame buffer over the WebSocket Peek stream (`{"lv":true}`) instead of trusting `/json/state`. Fields lie: with `lor>0` the API still reports `lm="UDP"` while every pushed frame is discarded. |
 | **Verified effect library** | Every template carries the measurement that let it in, and disproved writing styles go to a "不要这样写" list. Includes the Shimmer `sx=0` static-gradient trick, the `pal 4 = (ter, sec, prim)` slot order, and the scene-change reset that teleports a crest. |
 
+## Token budget (measured)
+
+Activating the skill loads `SKILL.md` only — a 147-line router at ≈1.9k tokens
+(down from 978 lines / ≈11.9k). Everything else is loaded on demand:
+
+| Task | Extra load | ≈tokens |
+|---|---|---|
+| Activate | `SKILL.md` | **1.9k** |
+| One-line scene colour | script-internal table | 1.9k |
+| One-minute dynamic recipe | `effect-templates.md` + `workflow.md` | 11.3k |
+| Look up one JSON field | one mirrored page | 2.3k–27k |
+| **Re-trigger later** | **nothing** (device-side preset) | **0** |
+
+Rules of thumb: query the device for the effect list (`GET /json/effects`) instead of
+reading the 25k-token effects encyclopaedia; open `references/wled-official/` one page
+at a time (18 pages ≈66k); and let the device own repeat triggers — save a preset and
+fire it from the WLED app, Mi Home scene, or a physical button.
+
 ## Requirements
 
 - A WLED device (16.x tested) reachable over HTTP on the same LAN
