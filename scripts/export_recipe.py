@@ -77,7 +77,7 @@ def export_recipe(name, analysis=None, colors=None, fx=None, sx=None, ix=None, b
         "description": description,
         "version": "1.0",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "format": "doubao-wled-recipe-v1"
+        "format": "wled-skills-recipe-v1"
     }
 
     # Load from analysis output

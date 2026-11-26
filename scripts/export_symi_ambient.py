@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Export a doubao-wled-recipe JSON into SYMI Ambient light-recipe import format.
+Export a wled-skills-recipe JSON into SYMI Ambient light-recipe import format.
 
 SYMI Ambient home card rules:
   - WLED native Effect: line1 = Chinese, line2 = official English from /json/effects
@@ -63,7 +63,7 @@ def to_symi_recipe(recipe: dict, display_name: str | None = None) -> dict:
         "lineSecondary": name,
         "stateJson": build_state_json(recipe),
         # Keep skill provenance for debugging / re-import
-        "format": "doubao-wled-recipe-v1",
+        "format": "wled-skills-recipe-v1",
         "source_fx": recipe.get("fx"),
         "source_theme": recipe.get("theme", ""),
         "exported_at": datetime.now().isoformat(timespec="seconds"),
@@ -81,7 +81,7 @@ def to_catalog(symi_recipe: dict, show_on_home: bool = True) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Export skill recipe → SYMI Ambient import JSON")
-    parser.add_argument("recipe", help="Path to doubao-wled-recipe JSON")
+    parser.add_argument("recipe", help="Path to wled-skills-recipe JSON")
     parser.add_argument("--name", help="Customer-facing recipe name (line 2 on home card)")
     parser.add_argument("--out", help="Output path (default: recipes/symi_<name>.json)")
     parser.add_argument("--no-home", action="store_true", help="Do not put recipe on homeIds")

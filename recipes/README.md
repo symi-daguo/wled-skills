@@ -10,7 +10,7 @@ Each file is a portable recipe that can be shared and imported to any WLED devic
   "description": "Description",
   "version": "1.0",
   "created_at": "ISO timestamp",
-  "format": "doubao-wled-recipe-v1",
+  "format": "wled-skills-recipe-v1",
   "colors": [[R,G,B], ...],
   "palette_data": [pos,R,G,B, ...],
   "fx": 10,

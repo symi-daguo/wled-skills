@@ -40,3 +40,6 @@ assets/test_scenes/*.png
 
 # 本地配置（含内网 IP），不入库
 config.json
+
+# 写前备份（device-safety.md）：含设备原始 presets/cfg，不入库
+backups/

@@ -1,7 +1,7 @@
 ---
-name: wled-light-recipe
-description: WLED智能灯带光配方设计师。支持图片取色与视频取色（截关键帧、取画面四周颜色映射到灯带四段）、生成平顺丝滑且随时间演变的动态灯光效果、按名称复用已创建的光配方，并同步到局域网内多台 WLED（主从同一效果）。写入局域网设备需在豆包办公模式下解锁。当用户需要基于场景的灯光效果（如茉莉花、日落、海洋、某段视频）、WLED控制、光配方、多设备同步时调用此技能。
-version: 1.0.8
+name: wled-skills
+description: WLED 灯带技能集（WLED Skills）。按自然语言快速出光效：场景配色（14 组静态氛围色）、图片取色、视频取色、1 分钟动态配方、按名称复用、局域网多设备同步；自动识别设备能力（RGB / RGBW / RGBCCT 五色、任意灯珠数、PWM 或 IC 灯带）并据此出码，写入前备份、写入后回读像素验收。WLED light-strip skill set — build any lighting mode from natural language (scene palettes, image/video colour extraction, 1-minute dynamic recipes, recall by name, LAN multi-device sync), auto-adapting to RGB / RGBW / RGBCCT strips of any LED count, with backup-before-write and pixel-level verification.
+version: 1.1.0
 author: symi-daguo
 category: smart-home
 permissions:
@@ -12,34 +12,80 @@ triggers:
   - 灯光效果
   - 光配方
   - 灯光场景
+  - 氛围色
+  - 场景配色
   - WLED
+  - WLED 灯带
+  - 灯带
+  - 灯珠
+  - 调光
+  - 调色
   - 茉莉花
   - 花开
   - 日落
   - 海洋
+  - 樱花
   - 灯光
   - 视频取色
   - 视频光配方
   - 多设备同步
+  - 预设
   - light recipe
   - light effect
+  - lighting scene
+  - ambient color
+  - scene palette
   - WLED control
+  - WLED strip
+  - led strip
   - scene lighting
   - video color
   - sync devices
   - jasmine
   - sunset
   - ocean
+  - cherry blossom
+  - preset
   - 灯带
   - 灯珠
   - 调色板
 ---
 
-# WLED Light Recipe Skill v1.0.5
+# WLED Skills v1.1.0
 
-Design smooth, continuously animating light recipes for WLED LED strips.
-Turn "jasmine blooms" or "this video's colour mood" into a gentle flowing
-gradient on your LED strip, and make every device on the LAN show it together.
+Design and drive WLED LED strips from natural language: scene palettes, image / video
+colour extraction, verified dynamic recipes, LAN multi-device sync — on any strip
+(RGB / RGBW / RGBCCT, any LED count), with backup before write and pixel-level proof.
+
+## 中文快速索引（先看这里）
+
+| 你要做的事 | 用这个 |
+|---|---|
+| 一句话出氛围色（14 组场景） | `scripts/scene_palette.py --list` → `scene_palette.py "热带海岸" --apply --ip <ip>` |
+| 直接说颜色（中英文都行） | `scene_palette.py "暖白" --apply --ip <ip>` |
+| 看设备是什么灯带 / 多少颗 | `scene_palette.py --probe --ip <ip>` |
+| 从图片取色 | `scripts/analyze_image.py <图片>` → `apply_recipe.py <配方> --ip <ip>` |
+| 从视频取色 | `scripts/analyze_video.py <视频>` → `apply_video_recipe.py <配方> --ip <ip>` |
+| 做 1 分钟会动的光效 | `references/effect-templates.md`（抄模版，别从零发明） |
+| 按名字复用之前的配方 | `scripts/recall_recipe.py` |
+| 多台灯带主从同步 | `scripts/sync_devices.py --ips a,b` |
+| **写设备之前** | **`references/device-safety.md`（必读）** |
+| 测完收尾 | `scene_palette.py --off --ip <ip>`（熄灯 + 归还同步设置） |
+
+**三条不可违反的硬规则**（详细版见 `references/device-safety.md` 与下方 CRITICAL RULES）：
+
+1. **写前先备份**：`apply_recipe.py --backup --ip <ip>`，出问题才有回退。
+2. **双灯带场景必须带 `--ip`**，否则会写到另一条灯带上。
+3. **测完必须熄灯并 `--release`**，否则会静默破坏客户的主从同步。
+
+> 文档语言：本文件面向"怎么做"的深层规范仍保留英文（术语与源码行号一一对应，避免翻译歧义），
+> 面向使用的章节、`references/scene-palettes.md`、`references/device-safety.md` 与
+> `README.md` 均为中文；英文用户看 `README.en.md`。
+
+## What this skill does
+
+Turn "jasmine blooms", "warm white", or "this video's colour mood" into a recipe that
+actually renders on the strip, then prove it with the device's own frame buffer.
 
 ## What This Skill Does
 
@@ -812,14 +858,14 @@ Step 3c.
 
 ## Recipe File Format
 
-All recipe files use a portable JSON format (`doubao-wled-recipe-v1`):
+All recipe files use a portable JSON format (`wled-skills-recipe-v1`):
 
 ```json
 {
   "name": "Jasmine Blooms",
   "description": "Jasmine flower colors",
   "version": "2.0",
-  "format": "doubao-wled-recipe-v1",
+  "format": "wled-skills-recipe-v1",
   "colors": [[100,150,80], [179,219,149], [240,250,219]],
   "palette_data": [0,100,150,80, 85,179,219,149, 170,240,250,219, 255,254,229,100],
   "fx": 12,

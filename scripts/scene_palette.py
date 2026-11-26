@@ -191,26 +191,54 @@ def cct_for(rgb: tuple[int, int, int]) -> int:
     return max(0, min(255, round(127 + (rgb[0] - rgb[2]) * 0.5)))
 
 
+# 颜色名兜底：用户直接说颜色（中英文）时不必落进场景表。
+# 纯色 = 三个槽给同一个颜色，pal 4 渲染出来就是平色。
+COLOR_NAMES: dict[str, str] = {
+    "红": "#FF0000", "红色": "#FF0000", "大红": "#FF0000", "red": "#FF0000",
+    "橙": "#FF6A00", "橙色": "#FF6A00", "orange": "#FF6A00",
+    "黄": "#FFD400", "黄色": "#FFD400", "yellow": "#FFD400",
+    "绿": "#00C832", "绿色": "#00C832", "green": "#00C832",
+    "青": "#00C8C8", "青色": "#00C8C8", "cyan": "#00C8C8", "teal": "#00C8C8",
+    "蓝": "#0060FF", "蓝色": "#0060FF", "blue": "#0060FF",
+    "紫": "#7A00FF", "紫色": "#7A00FF", "purple": "#7A00FF", "violet": "#7A00FF",
+    "粉": "#FF7FA8", "粉色": "#FF7FA8", "pink": "#FF7FA8",
+    "白": "#FFFFFF", "白色": "#FFFFFF", "white": "#FFFFFF",
+    "暖白": "#FFD9A0", "warmwhite": "#FFD9A0", "warm white": "#FFD9A0",
+    "冷白": "#E8F2FF", "coolwhite": "#E8F2FF", "cool white": "#E8F2FF",
+    "中性白": "#FFF4E8", "neutral white": "#FFF4E8",
+    "琥珀": "#FFB000", "amber": "#FFB000",
+    "金": "#FFC044", "金色": "#FFC044", "gold": "#FFC044",
+}
+
+
 # ---------------------------------------------------------------- 场景解析
-def resolve(query: str) -> tuple[str, str, str]:
+def resolve(query: str) -> tuple[str, str, str, int]:
+    """返回 (显示名, 起点色, 终点色, 默认亮度)。找不到抛 KeyError。
+
+    解析顺序：场景名精确 → 颜色名精确 → 场景别名/子串 → 反向子串。
+    颜色名优先于别名，避免「红」被某个场景的别名误吞。
+    """
     q = query.strip().replace(" ", "")
     if not q:
         raise KeyError("场景名为空")
     if q in SCENES:
-        name = q
-    else:
-        hits = [n for n, (_, _, _, al) in SCENES.items()
-                if q in n or any(q in a or a in q for a in al)]
-        if not hits:
-            hits = [n for n in SCENES if n in q]
-        if len(hits) == 1:
-            name = hits[0]
-        elif len(hits) > 1:
-            raise KeyError(f"「{query}」命中多个场景：{'、'.join(hits)}，请说完整名字")
-        else:
-            raise KeyError(f"没有「{query}」这个场景。用 --list 看全部 {len(SCENES)} 个")
-    start, end, _, _ = SCENES[name]
-    return name, start, end
+        start, end, bri, _ = SCENES[q]
+        return q, start, end, bri
+
+    c = COLOR_NAMES.get(q) or COLOR_NAMES.get(q.lower())
+    if c:
+        return f"纯色 {q}", c, c, 200
+
+    hits = [n for n, (_, _, _, al) in SCENES.items()
+            if q in n or any(q in a or a in q for a in al)]
+    if not hits:
+        hits = [n for n in SCENES if n in q]
+    if len(hits) == 1:
+        start, end, bri, _ = SCENES[hits[0]]
+        return hits[0], start, end, bri
+    if len(hits) > 1:
+        raise KeyError(f"「{query}」命中多个场景：{'、'.join(hits)}，请说完整名字")
+    raise KeyError(f"没有「{query}」这个场景或颜色。用 --list 看全部 {len(SCENES)} 个场景")
 
 
 # ---------------------------------------------------------------- 配方生成
@@ -391,12 +419,12 @@ def main() -> int:
         return 1
 
     try:
-        name, start_hex, end_hex = resolve(args.scene)
+        name, start_hex, end_hex, scene_bri = resolve(args.scene)
     except KeyError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
-    bri = max(1, min(255, args.bri if args.bri else SCENES[name][2]))
+    bri = max(1, min(255, args.bri if args.bri else scene_bri))
     if args.mid:
         try:
             hex_to_rgb(args.mid)

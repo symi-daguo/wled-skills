@@ -1,4 +1,6 @@
-# Doubao WLED Light Recipe Skill
+# WLED Skills
+
+**简体中文** ｜ [English](README.en.md)
 
 豆包 WLED 光配方技能 - 通过自然语言对话为 WLED 灯带生成动态灯光效果。
 
@@ -48,18 +50,18 @@ WLED 有主从同步。技能只需写入**主设备**，同组的其它灯带�
 
 ### 方法一：从 GitHub 仓库导入（推荐，手机版/桌面版通用）
 
-仓库地址：`https://github.com/symi-daguo/doubao-wled-skill`
+仓库地址：`https://github.com/symi-daguo/wled-skills`
 
 1. 打开豆包 App（手机版或桌面版）
 2. 进入技能管理页面（通常在"我的"→"技能"或设置中）
 3. 选择"从 GitHub 导入"或"添加技能"
-4. 输入仓库地址：`https://github.com/symi-daguo/doubao-wled-skill`
+4. 输入仓库地址：`https://github.com/symi-daguo/wled-skills`
 5. 确认导入，豆包会自动读取根目录的 `SKILL.md` 加载技能
 6. 技能名称显示为 `wled-light-recipe`，安装完成
 
 ### 方法二：本地导入
 
-1. `git clone https://github.com/symi-daguo/doubao-wled-skill.git`
+1. `git clone https://github.com/symi-daguo/wled-skills.git`
 2. 打开豆包桌面端，切换到"办公任务"模式
 3. 输入 `/创建技能` 或 `/install-skill`
 4. 选择本地导入，指定 clone 下来的目录
@@ -73,7 +75,7 @@ WLED 有主从同步。技能只需写入**主设备**，同组的其它灯带�
 ### 方法三：直接引用 Raw 链接
 
 如果豆包支持 Raw 链接导入，可直接引用：
-`https://raw.githubusercontent.com/symi-daguo/doubao-wled-skill/main/SKILL.md`
+`https://raw.githubusercontent.com/symi-daguo/wled-skills/main/SKILL.md`
 
 ## 配置说明
 
@@ -157,7 +159,7 @@ WLED 有主从同步。技能只需写入**主设备**，同组的其它灯带�
 ## 目录结构
 
 ```
-doubao-wled-skill/
+wled-skills/
 ├── SKILL.md                    # 技能核心指令（豆包读取）
 ├── config.json                 # 设备与布局配置
 ├── scripts/                    # Python 脚本
@@ -228,6 +230,7 @@ A: 将 `recipes/` 目录下的 JSON 文件发送给朋友，朋友导入到自�
 
 ## 版本
 
+- v1.1.0 (2026-11-26): **更名 WLED Skills**（原 `doubao-wled-skill`，仓库改名保留历史与旧链接跳转）；新增 `references/device-safety.md` 写保护层（写前 `--backup`、危险 GET、非幂等不重试、禁止残缺 `/settings` 表单）；场景名之外支持**中英文颜色名**兜底（红/暖白/blue/cyan…）；README 中英双版
 - v1.0.8 (2026-11-25): **全类型 WLED 自适应** —— 按固件上报的 `info.leds.lc` 能力位
   （`0x01`=RGB / `0x02`=W / `0x04`=CCT）决定出码形状，主推 WS2805 五色自动拆白并带 `cct`，
   WS2815/PWM 等纯 RGB 灯带走 3 通道；`apply_recipe.py` 新增 `--ip` 指定目标灯带、

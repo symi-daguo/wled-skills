@@ -1179,6 +1179,46 @@ def apply_recipe(recipe, dry_run=False, takeover=None):
     return result
 
 
+def backup_device(ip):
+    """Snapshot /presets.json + /cfg.json before a write.
+
+    Mandated by references/device-safety.md: WLED has no accounts, and a partial
+    /settings/* POST silently blanks every field you leave out, so the only way back
+    is a copy of the two files taken *before* the change.
+    """
+    import datetime
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_dir = os.path.join(os.path.dirname(SCRIPT_DIR), "backups")
+    os.makedirs(out_dir, exist_ok=True)
+    target = os.path.join(out_dir, f"{ip.replace('.', '_')}-{stamp}.json")
+
+    payload = {"ip": ip, "ts": stamp}
+    errors = []
+    for key, path in (("presets", "/presets.json"), ("cfg", "/json/cfg")):
+        try:
+            payload[key] = wled_request(ip, path, method="GET")
+        except Exception as exc:
+            payload[key] = None
+            errors.append(f"{path}: {exc}")
+
+    with open(target, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    result = {
+        "success": not errors,
+        "file": target,
+        "bytes": os.path.getsize(target),
+        "has_presets": payload["presets"] is not None,
+        "has_cfg": payload["cfg"] is not None,
+        "message": f"已备份 {ip} 的 presets.json + cfg.json 到 {target}",
+    }
+    if errors:
+        result["message"] = f"备份不完整（{'; '.join(errors)}）—— 不要在此状态下写入设备"
+        result["errors"] = errors
+    return result
+
+
 def main():
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__)
@@ -1192,6 +1232,16 @@ def main():
         idx = sys.argv.index("--ip")
         if idx + 1 < len(sys.argv):
             _IP_OVERRIDE = sys.argv[idx + 1].strip()
+
+    # --backup snapshots presets.json + cfg.json before any write (device-safety.md).
+    if "--backup" in sys.argv:
+        ip = get_wled_ip()
+        if not ip:
+            print(json.dumps({"success": False, "message": "WLED IP not configured"}, ensure_ascii=False))
+            sys.exit(1)
+        res = backup_device(ip)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        sys.exit(0 if res["success"] else 1)
 
     # --stop ends a looping recipe ("对豆包说结束" / manual stop in the WLED app).
     # Writing seg[0].fx with no "ps" trips json.cpp `if (!presetId &&

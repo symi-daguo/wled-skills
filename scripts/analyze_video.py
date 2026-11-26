@@ -196,7 +196,7 @@ def analyze_video_frames(frame_paths, scene_name="Video Scene", config=None,
     recipe = {
         "name": scene_name,
         "version": "1.0",
-        "format": "doubao-wled-recipe-v1",
+        "format": "wled-skills-recipe-v1",
         "source_type": "video",
         "frame_count": len(per_frame),
         "colors": rep_colors,

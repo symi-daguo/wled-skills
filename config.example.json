@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "description": "Doubao WLED Light Recipe Skill - config file. Copy to config.json and fill in your values.",
+  "description": "WLED Skills - config file. Copy to config.json and fill in your values.",
   "wled": {
     "ip": "",
     "mdns_name": "",
@@ -50,7 +50,7 @@
     "loop_playlist": true
   },
   "image_search": {
-    "source": "doubao_builtin",
+    "source": "builtin",
     "max_images_per_query": 3,
     "preferred_orientation": "landscape",
     "fallback_query_template": "{scene} high quality photo"
@@ -68,7 +68,7 @@
     "note": "写入门禁。真正写入局域网 WLED 前，必须先让用户确认处于豆包『办公模式（办公任务）』，再执行 python3 scripts/guard.py --enable --confirm-office-mode。默认 false=锁定。"
   },
   "video": {
-    "source": "doubao_builtin",
+    "source": "builtin",
     "frames": 8,
     "mode": "scene",
     "edge_band_ratio": 0.12,
