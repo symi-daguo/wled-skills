@@ -1,7 +1,7 @@
 ---
 name: wled-skills
 description: WLED 灯带技能集（WLED Skills）。按自然语言快速出光效：场景配色（14 组静态氛围色）、图片取色、视频取色、1 分钟动态配方、按名称复用、局域网多设备同步；自动识别设备能力（RGB / RGBW / RGBCCT 五色、任意灯珠数、PWM 或 IC 灯带）并据此出码，写入前备份、写入后回读像素验收。WLED light-strip skill set — build any lighting mode from natural language (scene palettes, image/video colour extraction, 1-minute dynamic recipes, recall by name, LAN multi-device sync), auto-adapting to RGB / RGBW / RGBCCT strips of any LED count, with backup-before-write and pixel-level verification.
-version: 1.4.1
+version: 1.4.2
 author: symi-daguo
 category: smart-home
 permissions:
@@ -51,7 +51,7 @@ triggers:
   - 调色板
 ---
 
-# WLED Skills v1.4.1
+# WLED Skills v1.4.2
 
 把一句话变成能上屏的光效，并**用设备自己的帧缓冲证明**它真的上了屏。
 任意 WLED：RGB / RGBW / RGBCCT、任意灯珠数、PWM 或 IC 灯带。
@@ -64,7 +64,9 @@ triggers:
 
 | 你要做的事 | 命令 | ≈token |
 |---|---|---|
-| 有哪些灯带、各自什么能力 | `wled.py devices` | 0 |
+| 有哪些灯带、各自什么能力 | `wled.py devices`（已配置别名） | 0 |
+| **扫局域网、看每台真实灯珠数** | **`wled.py scan`** | 0 |
+| **一主多从（只写一台，其余跟随）** | **`wled.py sync --master <别名>`** | 0 |
 | 现在什么状态 | `wled.py status`（`--json` 给机器读） | 0 |
 | 开关 / 亮度 | `wled.py on` · `wled.py off` · `wled.py bri 180` | 0 |
 | 给个颜色（中英文名或 `#hex`） | `wled.py color 暖白` · `wled.py color "#00B4D8"` | 0 |
@@ -108,6 +110,35 @@ triggers:
 > **不要整目录读 `references/wled-official/`**：18 篇合计 ≈66k token，其中
 > `features__effects.md` 单篇 ≈25k。它是查证用的字典，不是入门材料。
 > 效果清单以设备自身的 `/json/effects` 为准（220 个，随固件版本变，硬编码必然过时）。
+
+
+## 一主多从：只写一台，其余跟随（最省 token 的落地方式）
+
+客户要一份光配方时，**不要逐台下发**。先扫、再定主从、之后只写主灯带：
+
+```bash
+python3 scripts/wled.py scan                      # 每台的真实灯珠数 + 通道能力
+python3 scripts/wled.py sync --master strip70      # 主=strip70，其余自动跟随（原生 UDP 同步）
+python3 scripts/apply_recipe.py recipes/xxx.json --ip <主灯带 IP>   # 只写这一台
+```
+
+| 为什么这样最优 | 说明 |
+|---|---|
+| token | Agent 只记一个设备、只发一次；从机不进上下文 |
+| 一致性 | 同一份参数广播给所有灯带，不会出现"两台不一样" |
+| 资源 | 1 次 POST 而不是 N 次；从机由固件内部转发 |
+
+**两条硬约束（不同灯珠数时必须遵守）**：
+
+1. **同步只广播效果参数，不广播段几何**。`fx/sx/ix/pal/col` 会同步，
+   但每台的段范围是自己那份。⇒ 配方必须是**单段铺满**（`start` 省略/`stop` 省略，
+   或 `start_pct`/`stop_pct` 全 0–100）。多段配方同步过去会退化成整条同色。
+2. **通道数由接收端自己适配**。实测：主灯带（70 颗 RGBCCT）`col=[71,49,0,184]` 带 W，
+   从机（490 颗纯 RGB）自动变成 `col=[71,49,0]` —— WLED 的同步包传的是颜色值，
+   不传通道结构，所以五色/纯 RGB 混布也能一起跑。
+
+实机验证（v1.4.2）：只对 70 颗主灯带下发 `Loading`，490 颗从机自动变成
+`fx=47 sx=0 ix=120`，`verify_shape` 两台均判"形状合格"（右边界 +34% / +86%）。
 
 ## 存到手机、下次一键触发（零 token 路径）
 

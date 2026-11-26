@@ -149,6 +149,115 @@ def cmd_devices(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- 局域网发现 / 主从同步
+def _subnet(ip: str) -> str:
+    return ".".join(ip.split(".")[:3])
+
+
+def _probe_one(ip: str):
+    try:
+        info = get(ip, "/json/info")
+        leds = info.get("leds") or {}
+        st = get(ip, "/json/state")
+        return {
+            "ip": ip, "ver": info.get("ver"), "leds": int(leds.get("count") or 0),
+            "lc": int(leds.get("lc") or 0), "mac": info.get("mac"),
+            "on": st.get("on"),
+        }
+    except Exception:
+        return None
+
+
+def cmd_scan(args) -> int:
+    """扫整个 /24，报每台 WLED 的真实灯珠数与通道能力。"""
+    import concurrent.futures as cf
+
+    ip = resolve_dev(args.dev)
+    if not ip:
+        print("错误：先给一个已知设备或用 --dev", file=sys.stderr)
+        return 1
+    base = _subnet(ip)
+    hits = []
+    with cf.ThreadPoolExecutor(max_workers=64) as ex:
+        for r in ex.map(_probe_one, [f"{base}.{i}" for i in range(1, 255)]):
+            if r:
+                hits.append(r)
+    hits.sort(key=lambda r: int(r["ip"].split(".")[-1]))
+    if args.json:
+        print(json.dumps(hits, ensure_ascii=False, indent=2))
+        return 0 if hits else 1
+    print(f"{base}.0/24 上共 {len(hits)} 台 WLED：")
+    for r in hits:
+        ch = sp.channels_label({"has_rgb": bool(r["lc"] & 1), "has_w": bool(r["lc"] & 2),
+                                "has_cct": bool(r["lc"] & 4)})
+        print(f"  {r['ip']:<15} {r['ver']:<9} {r['leds']:>4} 颗  {ch:<12} on={r['on']}  mac={r['mac']}")
+    counts = {r["leds"] for r in hits}
+    if len(counts) > 1:
+        print(f"  注意：灯珠数不一致 {sorted(counts)} —— 同步按效果参数广播，段几何各机自持，"
+              f"所以配方必须用「单段铺满 + 百分比」写法")
+    return 0 if hits else 1
+
+
+    """把一台设为主、其余跟随（WLED 原生 UDP 通知同步，只广播效果参数不广播段几何）。"""
+    import concurrent.futures as cf
+
+    master = resolve_dev(args.master or args.dev)
+    if not master:
+        print("错误：--master 必填（或用 --dev 指定主灯带）", file=sys.stderr)
+        return 1
+    base = _subnet(master)
+    ips = []
+    with cf.ThreadPoolExecutor(max_workers=64) as ex:
+        for r in ex.map(_probe_one, [f"{base}.{i}" for i in range(1, 255)]):
+            if r:
+                ips.append(r["ip"])
+    ips.sort(key=lambda x: int(x.split(".")[-1]))
+    if master not in ips:
+        print(f"错误：主灯带 {master} 不在线", file=sys.stderr)
+        return 1
+    if len(ips) < 2:
+        print(f"只有 {master} 一台在线，没有需要同步的从机", file=sys.stderr)
+        return 0
+    ordered = [master] + [i for i in ips if i != master]
+    print(f"主：{master}   从：{', '.join(ordered[1:])}   组 {args.group}")
+    rc = _delegate("sync_devices.py", ["--setup", "--ips", ",".join(ordered),
+                                       "--master", master, "--group", str(args.group)])
+    if rc == 0:
+        print("已配置。之后只需对主灯带下发，其余会自动跟随（省 token）。")
+        print(f"  下发示例：wled.py scene 热带海岸 --apply --dev {args.master or master}")
+    return rc
+
+
+def cmd_sync(args) -> int:
+    """把一台设为主、其余跟随（WLED 原生 UDP 通知同步；只广播效果参数，不广播段几何）。"""
+    import concurrent.futures as cf
+
+    master = resolve_dev(args.master or args.dev)
+    if not master:
+        print("错误：--master 必填（或用 --dev 指定主灯带）", file=sys.stderr)
+        return 1
+    base = _subnet(master)
+    ips = []
+    with cf.ThreadPoolExecutor(max_workers=64) as ex:
+        for r in ex.map(_probe_one, [f"{base}.{i}" for i in range(1, 255)]):
+            if r:
+                ips.append(r["ip"])
+    ips.sort(key=lambda x: int(x.split(".")[-1]))
+    if master not in ips:
+        print(f"错误：主灯带 {master} 不在线", file=sys.stderr)
+        return 1
+    if len(ips) < 2:
+        print(f"只有 {master} 一台在线，没有需要同步的从机")
+        return 0
+    ordered = [master] + [i for i in ips if i != master]
+    print(f"主：{master}   从：{', '.join(ordered[1:])}   组 {args.group}")
+    rc = _delegate("sync_devices.py", ["--setup", "--ips", ",".join(ordered),
+                                       "--master", master, "--group", str(args.group)])
+    if rc == 0:
+        print("已配置。之后只对主灯带下发即可，其余自动跟随（省 token）。")
+    return rc
+
+
 def cmd_status(args) -> int:
     ip = resolve_dev(args.dev)
     st = get(ip, "/json/state")
@@ -348,6 +457,10 @@ def main() -> int:
     sub = ap.add_subparsers(dest="verb", required=True)
 
     sub.add_parser("devices", help="列出已配置的灯带与能力")
+    sub.add_parser("scan", help="扫局域网所有 WLED，报真实灯珠数与通道能力")
+    _sp_sync = sub.add_parser("sync", help="一台为主、其余跟随（WLED 原生 UDP 同步）")
+    _sp_sync.add_argument("--master", default=None, help="主灯带别名或 IP")
+    _sp_sync.add_argument("--group", type=int, default=1, help="同步分组（默认 1）")
     sub.add_parser("status", help="当前状态与能力")
 
     for v, h in (("on", "开灯"), ("off", "关灯"), ("toggle", "切换（非幂等）")):
@@ -401,10 +514,14 @@ def main() -> int:
 
     if args.verb == "devices":
         return cmd_devices(args)
-    if not ip:
+    if not ip and args.verb not in ("scan",):
         print("错误：没有目标设备。用 --dev <别名|IP>，或先跑 scripts/discover_wled.py", file=sys.stderr)
         return 1
 
+    if args.verb == "scan":
+        return cmd_scan(args)
+    if args.verb == "sync":
+        return cmd_sync(args)
     if args.verb == "status":
         return cmd_status(args)
     if args.verb in ("on", "off", "toggle"):

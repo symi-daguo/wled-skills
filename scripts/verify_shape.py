@@ -125,9 +125,13 @@ def main() -> int:
     problems = []
     if not advancing:
         problems.append("右边界没推进（亮区位置基本不变）")
-    if not varies:
-        problems.append("宽度几乎不变（整条同亮同灭，没有推进）")
-    if static_block:
+    # 两种合法的"在动"：
+    #   推进型（填充变长）→ 宽度变化
+    #   移动型（亮带平移）→ 宽度不变但位置在走
+    # 只有"宽度不变且位置也不动"才是整条同亮同灭。
+    if not varies and not advancing:
+        problems.append("宽度和位置都不变（整条同亮同灭，没有推进）")
+    if static_block and not advancing:
         problems.append("存在大面积静态亮块（亮但完全不波动）")
     print("  判定：" + ("形状合格（边界在推进）" if not problems else "不合格 —— " + "；".join(problems)))
     return 0 if not problems else 1
