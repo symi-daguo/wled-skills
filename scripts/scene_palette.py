@@ -113,9 +113,14 @@ def probe(ip: str) -> dict:
     except Exception:
         ins = []
     first = ins[0] if ins else {}
+    led_type = int(first.get("type", -1)) if first.get("type") is not None else -1
+    is_pwm = 41 <= led_type <= 47
     return {
         "ip": ip,
         "ver": info.get("ver"),
+        "type_kind": "PWM(不可寻址)" if is_pwm else ("IC(可寻址)" if 0 < led_type < 40 else "未知"),
+        "is_ic": 0 < led_type < 40,
+        "is_pwm": is_pwm,
         "count": int(leds.get("count") or 0),
         "lc": lc,
         "has_rgb": bool(lc & 0x01),
@@ -140,8 +145,8 @@ def channels_label(caps: dict) -> str:
 
 def format_caps(caps: dict) -> str:
     return (f"{caps['ip']}  WLED {caps['ver']}  {caps['count']} 颗  "
-            f"通道 {channels_label(caps)} (lc=0x{caps['lc']:02X})  "
-            f"type={caps['type']} order={caps['order']} rgbwm={caps['rgbwm']}")
+            f"{channels_label(caps)} (lc=0x{caps['lc']:02X})  "
+            f"{caps.get('type_kind', '?')}  type={caps['type']} order={caps['order']}")
 
 
 # ---------------------------------------------------------------- 颜色工具

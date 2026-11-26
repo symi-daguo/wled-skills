@@ -434,12 +434,25 @@ def device_caps(ip):
     if ip in _CAPS_CACHE:
         return _CAPS_CACHE[ip]
     lc = 0
+    led_type = -1
     try:
         info = wled_request(ip, "/json/info", method="GET", timeout=4) or {}
         lc = int(((info.get("leds") or {}).get("lc")) or 0)
     except Exception:
         lc = 0
-    caps = {"lc": lc, "has_rgb": bool(lc & 0x01), "has_w": bool(lc & 0x02), "has_cct": bool(lc & 0x04)}
+    try:
+        cfg = wled_request(ip, "/json/cfg", method="GET", timeout=4) or {}
+        ins = ((cfg.get("hw") or {}).get("led") or {}).get("ins") or []
+        if ins:
+            led_type = int(ins[0].get("type", -1))
+    except Exception:
+        led_type = -1
+    # 固件分类（const.h）：TYPE_ONOFF=40，TYPE_ANALOG_MIN=41 .. TYPE_ANALOG_MAX=47（PWM），
+    # 数字(IC/可寻址)类型全部 < 40（如 WS281x=22、WS2805=32）。
+    is_pwm = 41 <= led_type <= 47
+    is_ic = 0 < led_type < 40
+    caps = {"lc": lc, "type": led_type, "is_ic": is_ic, "is_pwm": is_pwm,
+            "has_rgb": bool(lc & 0x01), "has_w": bool(lc & 0x02), "has_cct": bool(lc & 0x04)}
     _CAPS_CACHE[ip] = caps
     return caps
 
@@ -1195,7 +1208,16 @@ def apply_recipe(recipe, dry_run=False, takeover=None):
 
     # Build state update
     bri = recipe.get("bri", 200)
-    segments = build_segments(recipe, config, device_led_count)
+    # PWM 灯带做不了逐颗，配方可以给一份降级版（segments_pwm）；没给就原样下发并告警
+    _caps = device_caps(ip)
+    _src = recipe
+    if _caps and _caps.get("is_pwm"):
+        if recipe.get("segments_pwm"):
+            _src = dict(recipe, segments=recipe["segments_pwm"])
+            _clamp_warnings.append("目标为 PWM 灯带：已改用 segments_pwm 降级版（逐颗效果无意义）")
+        else:
+            _clamp_warnings.append("目标为 PWM 灯带，但配方没有 segments_pwm —— 逐颗效果会退化成整条同色")
+    segments = build_segments(_src, config, device_led_count)
     _fit_notes = fit_cols_to_capabilities(segments, ip)
 
     state_patch = {
