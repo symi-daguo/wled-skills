@@ -1,0 +1,62 @@
+{
+  "name": "日出东方",
+  "type": "sunrise",
+  "bri": 220,
+  "_design": {
+    "mode": "静态→渐亮：一次 60 秒的日出（原生 Sunrise 效果）",
+    "why_native": "fx 104 就是为日出设计的：sx = 日出时长(分钟)，sx=1 → 60 秒；pal 决定色带",
+    "palette": "col[2] 深余烬 #3A0A00 → col[1] 橙红 #C2410C → col[0] 暖白金 #FFE9B8（pal 4 = ter,sec,prim）",
+    "capability": "col 只写 3 元；apply_recipe 会按 info.leds.lc 自动拆白 + 补 cct（RGBW/五色灯带）",
+    "not_black_by_accident": "起始是三成亮度的深余烬，不是纯黑；日出本来就该从暗开始"
+  },
+  "colors": [
+    [
+      255,
+      233,
+      184
+    ],
+    [
+      194,
+      65,
+      12
+    ],
+    [
+      58,
+      10,
+      0
+    ]
+  ],
+  "segments": [
+    {
+      "start": 0,
+      "fx": 104,
+      "sx": 1,
+      "ix": 200,
+      "pal": 4,
+      "bri": 255,
+      "mi": false,
+      "of": 0,
+      "bm": 0,
+      "o1": false,
+      "o2": false,
+      "o3": false,
+      "col": [
+        [
+          255,
+          233,
+          184
+        ],
+        [
+          194,
+          65,
+          12
+        ],
+        [
+          58,
+          10,
+          0
+        ]
+      ]
+    }
+  ]
+}

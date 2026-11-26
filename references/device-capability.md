@@ -76,3 +76,28 @@ Rules that follow from that:
    `config.json` is local-only and gitignored too — no internal IP ever goes into the repo.
 3. **Multi-device sync is opt-in.** `sync_devices.py --ips a,b` is the only thing that
    should touch `if.sync.*`; don't hand-write it while testing a single strip.
+
+## 白通道被 `col[0]` 钉住的效果（五色灯带必看）
+
+`FX_fcn.cpp` `Segment::color_from_palette()` 末尾：
+
+```cpp
+CRGBW palcol = ColorFromPalette(_currentPalette, paletteIndex, pbri, blend);
+palcol.w = W(color);   // color = getCurrentColor(mcol)
+```
+
+调用方传 `mcol=255` 时，`getCurrentColor(255)` 落到 `_currentColors[0]`，
+于是**白通道恒等于段落 `col[0]` 的白分量**，与 `stage` / 位置**无关**。
+
+两种后果，必须分清：
+
+| 场景 | `col[0].W` 的作用 | 正确做法 |
+|---|---|---|
+| **静态氛围色**（`fx 161` + `sx=0`） | 就是「最终画面的白强度」，正合适 | 保留拆白算出的 W |
+| **从暗到亮的动态效果**（`Sunrise` 104 等） | 是一层**恒定白底**：日出还没开始就已经满亮 | **W 全部置 0**，只让 RGB 参与渐变 |
+
+实测证据（70 颗 WS2805）：`col[0].W=184` 时 t=3s 亮度 214（满亮）、全程不动；
+W 置 0 后同一配方变成 41 → 175（x4.3），与 490 颗纯 RGB 的 38 → 176 几乎重合。
+
+代码里由 `apply_recipe.W_PINNED_EFFECTS` 处理（目前 `{104}`）。
+碰到别的效果「一开就满亮」，先怀疑这条，把 W 置 0 再试。

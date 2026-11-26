@@ -269,6 +269,11 @@ A: 将 `recipes/` 目录下的 JSON 文件发送给朋友，朋友导入到自�
 
 ## 版本
 
+- v1.3.1 (2026-11-26): 新增示例配方 `recipes/日出东方.json`（原生 Sunrise，一次 60 秒）；
+  **修五色灯带日出满亮**：`color_from_palette` 把白通道钉在 `col[0].W`，恒定白底要先置 0
+  （`apply_recipe.W_PINNED_EFFECTS`）；`apply_recipe` 现在按 `info.leds.lc` 自动给任何配方
+  拆白 + 补 `cct`，同一份配方可直接跑 RGB / RGBW / RGBCCT；段省略 `stop` = 铺满整条；
+  `Sunrise` 的 `sx` 是日出分钟数，已加入限幅豁免（原先会被钳成 50 分钟）
 - v1.3.0 (2026-11-26): **统一入口 `wled.py`**（动词 + 设备别名 + 自描述 `effects`/`palettes` + `save`/`preset`/`recall` 一键复用），融合社区同类技能的交互优势；新增 `references/intent-map.md`（意图→效果，21 个效果全部在设备上核对存在，剔除本机没有的 `Forest`/`Sunset`）与 `references/done-checklist.md`（7 条交付前必查）；修 **中文预设名被存成 `\uXXXX`** （6 个脚本的 `json.dumps` 缺 `ensure_ascii=False`）与**预设落盘延迟**（改为回读确认）
 - v1.2.0 (2026-11-26): **Token 架构重构** —— SKILL.md 从 978 行 / ≈11.9k token 压到
   147 行 / ≈1.9k（-84%），改为「一张路由表 + 按需加载」：静态场景、动态模版、硬规则、

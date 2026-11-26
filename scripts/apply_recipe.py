@@ -339,6 +339,10 @@ _EFFECT_AXIS_EXEMPT = {
     # sx = 0 is a documented static mode for Shimmer (`FX.cpp`: `else { position =
     # (SEGLEN << 7); }`), used by the static scene-palette recipes. Clamping it up
     # to 40 would silently re-animate a "still" gradient.
+    # Sunrise(104): `sx` is "Time [min]" (1..60 = minutes of sunrise, 0 = static sun,
+    # >120 = breathing). The generic 50..90 clamp would turn a 1-minute sunrise into a
+    # 50-minute one. `ix` is "Width".  (FX.cpp: "speed 1 - 60: sunrise time in minutes")
+    104: {"sx": (0, 255), "ix": (0, 255)},    # Sunrise
     161: {"sx": (0, 200), "ix": (0, 120)},    # Shimmer
     101: {"sx": (20, 200), "ix": (100, 200)},  # Pacifica
 }
@@ -404,6 +408,85 @@ def normalise_cols(col, fallback=(128, 128, 128)):
     return out
 
 
+
+# 白通道被 col[0] 钉住的效果。
+# `FX_fcn.cpp` `Segment::color_from_palette()` 末尾：
+#     CRGBW palcol = ColorFromPalette(...);
+#     palcol.w = W(color);          // color = getCurrentColor(mcol)
+# 这类效果（调用时 mcol=255 → getCurrentColor(255) → _currentColors[0]）的 W **恒等于
+# 段落 col[0] 的白分量**，不随 stage / 位置变化。对"从暗到亮"的效果就是一层恒定白底：
+# Sunrise(104) 在五色灯带上会一开就满亮。所以这些效果必须把 W 置 0，只让 RGB 参与渐变。
+# 静态氛围色不受影响 —— 那边 col[0].W 正好就是"最终画面的白强度"。
+W_PINNED_EFFECTS = {104}   # Sunrise
+
+_CAPS_CACHE = {}
+
+
+def device_caps(ip):
+    """读设备的通道能力（`info.leds.lc`：0x01=RGB 0x02=W 0x04=CCT）。"""
+    if not ip:
+        return None
+    if ip in _CAPS_CACHE:
+        return _CAPS_CACHE[ip]
+    lc = 0
+    try:
+        info = wled_request(ip, "/json/info", method="GET", timeout=4) or {}
+        lc = int(((info.get("leds") or {}).get("lc")) or 0)
+    except Exception:
+        lc = 0
+    caps = {"lc": lc, "has_rgb": bool(lc & 0x01), "has_w": bool(lc & 0x02), "has_cct": bool(lc & 0x04)}
+    _CAPS_CACHE[ip] = caps
+    return caps
+
+
+def _cct_for(rgb):
+    # 与 scripts/scene_palette.py 的 cct_for 同一条公式（那边是权威实现）
+    return max(0, min(255, round(127 + (rgb[0] - rgb[2]) * 0.5)))
+
+
+def fit_cols_to_capabilities(segments, ip):
+    """把 col 调整成这灯带真正能驱动的形状。返回改动说明。
+
+    RGB 灯带给 3 元；有白通道的（RGBW/RGBCCT，如 WS2805）给 4 元并拆白 + 带 cct，
+    否则白灯珠全程为 0，亮度少一半、观感发灰。
+    """
+    caps = device_caps(ip)
+    if not caps:
+        return []
+    notes = []
+    for seg in segments or []:
+        cols = seg.get("col") or []
+        if not cols:
+            continue
+        if caps["has_w"]:
+            if any(len(c) == 3 for c in cols):
+                new, whites = [], []
+                pin_w = seg.get("fx") in W_PINNED_EFFECTS
+                for c in cols:
+                    if len(c) == 3:
+                        w = 0 if pin_w else min(c)
+                        new.append([c[0] - w, c[1] - w, c[2] - w, w])
+                        whites.append(w)
+                    else:
+                        new.append(list(c))
+                        whites.append(c[3] if len(c) > 3 else 0)
+                seg["col"] = new
+                if pin_w:
+                    notes.append("W 置 0（该效果把白通道钉在 col[0]，否则恒定白底一开就满亮）")
+                if caps["has_cct"] and "cct" not in seg:
+                    seg["cct"] = _cct_for(new[whites.index(max(whites))])
+                notes.append("col 3→4 元（拆白）+ cct")
+        else:
+            if any(len(c) > 3 for c in cols):
+                seg["col"] = [list(c[:3]) for c in cols]
+                seg.pop("cct", None)
+                notes.append("col 4→3 元（纯 RGB 灯带，丢弃白通道）")
+            elif caps["has_cct"] and "cct" not in seg:
+                seg["cct"] = 127
+                notes.append("补 cct=127")
+    return notes
+
+
 def build_segments(recipe, config, device_led_count=0):
     """Build segment configuration based on layout type.
     Falls back to single segment if layout config is incomplete.
@@ -460,7 +543,8 @@ def build_segments(recipe, config, device_led_count=0):
         out = []
         for spec in seg_specs:
             start = int(spec.get("start", 0))
-            stop = int(spec.get("stop", 0))
+            # 省略 stop / 填 0 = 铺满整条，让同一份配方能吃不同灯数的灯带
+            stop = int(spec.get("stop", 0) or total_leds)
             if stop <= start or start < 0 or stop > total_leds:
                 raise ValueError(
                     "segments[%d] 的范围 %d-%d 非法（灯珠总数 %d）"
@@ -733,6 +817,7 @@ def clear_stale_segments(ip, segments):
 def build_scene_state(scene, config, device_led_count=0, ip=None):
     """One playlist scene -> a complete WLED state patch (on/bri/seg)."""
     segments = build_segments(scene, config, device_led_count)
+    fit_cols_to_capabilities(segments, ip)
     if ip:
         segments = clear_stale_segments(ip, segments)
     return {
@@ -1100,6 +1185,7 @@ def apply_recipe(recipe, dry_run=False, takeover=None):
     # Build state update
     bri = recipe.get("bri", 200)
     segments = build_segments(recipe, config, device_led_count)
+    _fit_notes = fit_cols_to_capabilities(segments, ip)
 
     state_patch = {
         "on": True,

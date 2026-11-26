@@ -33,6 +33,7 @@ Thumbs.db
 recipes/*.json
 !recipes/README.md
 !recipes/example_recipe.json
+!recipes/日出东方.json
 
 # Real photo assets (copyrighted, not for commit)
 assets/test_scenes/*.jpg
