@@ -1,553 +1,61 @@
 {
-  "name": "日出东方（亮界推进）",
-  "type": "sunrise-sweep",
+  "name": "日出东方（逐颗灌满）",
+  "type": "fill",
   "bri": 225,
-  "preset_base": 120,
-  "playlist_preset_id": 160,
-  "loop": {
-    "repeat": 0,
-    "transition": 20
-  },
-  "stop": {
-    "on": false
-  },
   "_design": {
-    "why": "WLED 没有单向灌满的原生效果：Sunrise(104) 亮区恒在中点、Wipe(3) 来回擦、Meteor(76) 只亮 5% 灯珠。所以用 12 幕播放列表让「已升起」的子段逐幕加长，交叠淡入 ⇒ 亮界从一端单向推进。",
-    "shape": "每幕 seg0=0..pct 暖白（已升起），seg1=pct..100 余烬（未升起）；全程无缝隙覆盖，R1 满足",
-    "pct": "用 stop_pct 写百分比，一份配方同时跑 70 颗与 490 颗",
-    "verify": "verify_shape.py：亮区宽度应随时间单调增长 ≈8%→50%→92%，且无静止亮块"
+    "primitive": "Loading(47) = gradient_base(true)：填充位置 pp 按 strip.now 推进，整数步进 ⇒ 一颗 IC 一颗 IC 往前走；sx=0 时整条 65 秒灌满",
+    "why_not_playlist": "12 幕播放列表每幕跳 70/12≈5.8 颗，看不出逐颗；而且 12 个预设纯浪费。单段单效果即可，下发一次成功",
+    "why_not_sunrise": "Sunrise(104) 同色镜像 i/SEGLEN-1-i，亮区恒在中点不移动",
+    "colours": "pal 4 = (ter,sec,prim)：col[2] 深余烬 → col[1] 橙红 → col[0] 暖白金",
+    "verify": "verify_shape.py：峰值漂移 + 右边界增长；实测 70 颗 31→42/15s、490 颗 169→227/15s"
   },
-  "scenes": [
+  "colors": [
+    [
+      255,
+      233,
+      184
+    ],
+    [
+      194,
+      65,
+      12
+    ],
+    [
+      58,
+      10,
+      0
+    ]
+  ],
+  "segments": [
     {
-      "name": "日出 1/12（亮界 8%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 8.33,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 8.33,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 2/12（亮界 17%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 16.67,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 16.67,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 3/12（亮界 25%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 25.0,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 25.0,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 4/12（亮界 33%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 33.33,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 33.33,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 5/12（亮界 42%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 41.67,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 41.67,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 6/12（亮界 50%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 50.0,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 50.0,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 7/12（亮界 58%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 58.33,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 58.33,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 8/12（亮界 67%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 66.67,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 66.67,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 9/12（亮界 75%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 75.0,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 75.0,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 10/12（亮界 83%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 83.33,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 83.33,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 11/12（亮界 92%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 91.67,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        },
-        {
-          "start_pct": 91.67,
-          "stop_pct": 100,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              58,
-              10,
-              0
-            ]
-          ]
-        }
-      ]
-    },
-    {
-      "name": "日出 12/12（亮界 100%）",
-      "duration": 50,
-      "segments": [
-        {
-          "start": 0,
-          "stop_pct": 100.0,
-          "fx": 0,
-          "pal": 0,
-          "bri": 255,
-          "mi": false,
-          "of": 0,
-          "bm": 0,
-          "o1": false,
-          "o2": false,
-          "o3": false,
-          "col": [
-            [
-              255,
-              233,
-              184
-            ]
-          ]
-        }
+      "start": 0,
+      "fx": 47,
+      "sx": 0,
+      "ix": 120,
+      "pal": 4,
+      "bri": 255,
+      "mi": false,
+      "of": 0,
+      "bm": 0,
+      "o1": false,
+      "o2": false,
+      "o3": false,
+      "col": [
+        [
+          255,
+          233,
+          184
+        ],
+        [
+          194,
+          65,
+          12
+        ],
+        [
+          58,
+          10,
+          0
+        ]
       ]
     }
   ]

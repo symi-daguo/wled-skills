@@ -66,6 +66,7 @@ def shot(ip: str, sec: float = 1.2):
         "left": bright[0] if bright else -1,
         "right": bright[-1] if bright else -1,
         "peak": peak,
+        "peak_pos": luma.index(peak) / (n - 1),
         "var": var,
         "profile": [round(v / peak, 1) for v in luma[:: max(1, n // 20)]],
     }
@@ -97,7 +98,10 @@ def main() -> int:
     edge_growth = (max(rights) - min(rights)) / n
     width_span = max(widths) - min(widths)
     max_var = max(r["var"] for r in runs)
-    advancing = edge_growth >= 0.25
+    # 软渐变里"亮区边界"会被阈值钝化，峰值的位移才可靠
+    peaks = [r["peak_pos"] for r in runs]
+    peak_drift = max(peaks) - min(peaks)
+    advancing = edge_growth >= 0.25 or peak_drift >= 0.25
     varies = width_span >= 0.05
     static_block = max_var < 3 and max(widths) > 0.5     # 大面积亮且完全不波动
 
@@ -105,6 +109,7 @@ def main() -> int:
         print(json.dumps({
             "ip": args.ip, "leds": n, "widths": widths, "right_edges": rights,
             "edge_growth": round(edge_growth, 2), "width_span": round(width_span, 2),
+            "peak_drift": round(peak_drift, 2),
             "max_variation": round(max_var, 1), "advancing": advancing,
             "width_varies": varies, "static_block": static_block,
         }, ensure_ascii=False, indent=2))
@@ -116,7 +121,7 @@ def main() -> int:
     print(f"  空间剖面（每格 = 1/20 屏宽，1.0 = 该帧峰值）")
     for k, r in enumerate(runs[:3]):
         print(f"    采样{k+1} " + "".join(" .:-=+*#%@"[min(9, int(v * 9))] for v in r["profile"]))
-    print(f"  右边界增长 {edge_growth*100:.0f}% 屏宽 | 宽度变化 {width_span*100:.0f}% | 亮区最大波动 {max_var:.1f}")
+    print(f"  右边界增长 {edge_growth*100:.0f}% | 峰值漂移 {peak_drift*100:.0f}% | 宽度变化 {width_span*100:.0f}% | 亮区波动 {max_var:.1f}")
     problems = []
     if not advancing:
         problems.append("右边界没推进（亮区位置基本不变）")

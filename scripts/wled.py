@@ -90,8 +90,10 @@ def resolve_dev(explicit: str | None) -> str:
 
 
 def get(ip: str, path: str) -> dict | list:
+    # /presets.json 里可能含非 UTF-8 字节（老固件/历史写入），严格解码会整条崩掉，
+    # 而 _presets() 又把异常吞成 {} —— 表现为"存了但读不到"。必须容错解码。
     with urllib.request.urlopen(f"http://{ip}{path}", timeout=5) as r:
-        return json.loads(r.read().decode("utf-8"))
+        return json.loads(r.read().decode("utf-8", "replace"))
 
 
 def post(ip: str, payload: dict) -> str:
