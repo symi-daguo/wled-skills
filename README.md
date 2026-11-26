@@ -269,6 +269,9 @@ A: 将 `recipes/` 目录下的 JSON 文件发送给朋友，朋友导入到自�
 
 ## 版本
 
+- v1.3.2 (2026-11-26): 新增 `scripts/verify_motion.py`（**变化量质心**判据：区分"变亮"与"在动"）；
+  `recipes/日出东方.json` 改为**双层**（Sunrise 天亮 + Meteor 走太阳），平均亮度 8→145；
+  修 Meteor 的 `sx`/`ix` 被误钳（`sx` 是速度、`ix` 是拖尾长度），并加入 `W_PINNED_EFFECTS`
 - v1.3.1 (2026-11-26): 新增示例配方 `recipes/日出东方.json`（原生 Sunrise，一次 60 秒）；
   **修五色灯带日出满亮**：`color_from_palette` 把白通道钉在 `col[0].W`，恒定白底要先置 0
   （`apply_recipe.W_PINNED_EFFECTS`）；`apply_recipe` 现在按 `info.leds.lc` 自动给任何配方

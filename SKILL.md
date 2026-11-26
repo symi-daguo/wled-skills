@@ -1,7 +1,7 @@
 ---
 name: wled-skills
 description: WLED 灯带技能集（WLED Skills）。按自然语言快速出光效：场景配色（14 组静态氛围色）、图片取色、视频取色、1 分钟动态配方、按名称复用、局域网多设备同步；自动识别设备能力（RGB / RGBW / RGBCCT 五色、任意灯珠数、PWM 或 IC 灯带）并据此出码，写入前备份、写入后回读像素验收。WLED light-strip skill set — build any lighting mode from natural language (scene palettes, image/video colour extraction, 1-minute dynamic recipes, recall by name, LAN multi-device sync), auto-adapting to RGB / RGBW / RGBCCT strips of any LED count, with backup-before-write and pixel-level verification.
-version: 1.3.1
+version: 1.3.2
 author: symi-daguo
 category: smart-home
 permissions:
@@ -51,7 +51,7 @@ triggers:
   - 调色板
 ---
 
-# WLED Skills v1.3.1
+# WLED Skills v1.3.2
 
 把一句话变成能上屏的光效，并**用设备自己的帧缓冲证明**它真的上了屏。
 任意 WLED：RGB / RGBW / RGBCCT、任意灯珠数、PWM 或 IC 灯带。

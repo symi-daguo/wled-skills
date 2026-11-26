@@ -343,6 +343,9 @@ _EFFECT_AXIS_EXEMPT = {
     # >120 = breathing). The generic 50..90 clamp would turn a 1-minute sunrise into a
     # 50-minute one. `ix` is "Width".  (FX.cpp: "speed 1 - 60: sunrise time in minutes")
     104: {"sx": (0, 255), "ix": (0, 255)},    # Sunrise
+    # Meteor(76): sx = Speed (`counter = now*((sx>>2)+8)`，0 = 最慢 ≈8.2s 一圈，越大越快)；
+    # ix = 拖尾长度（不是"强度"）。按普通效果钳到 50..90/80..120 会把慢速和长尾都改掉。
+    76:  {"sx": (0, 255), "ix": (0, 255)},    # Meteor
     161: {"sx": (0, 200), "ix": (0, 120)},    # Shimmer
     101: {"sx": (20, 200), "ix": (100, 200)},  # Pacifica
 }
@@ -417,7 +420,7 @@ def normalise_cols(col, fallback=(128, 128, 128)):
 # 段落 col[0] 的白分量**，不随 stage / 位置变化。对"从暗到亮"的效果就是一层恒定白底：
 # Sunrise(104) 在五色灯带上会一开就满亮。所以这些效果必须把 W 置 0，只让 RGB 参与渐变。
 # 静态氛围色不受影响 —— 那边 col[0].W 正好就是"最终画面的白强度"。
-W_PINNED_EFFECTS = {104}   # Sunrise
+W_PINNED_EFFECTS = {104, 76}   # Sunrise, Meteor（都用 color_from_palette(..., mcol=255)）
 
 _CAPS_CACHE = {}
 
