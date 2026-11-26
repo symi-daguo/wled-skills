@@ -71,7 +71,7 @@ def _get(ip: str, path: str, timeout: float = 4.0) -> dict:
 def _post(ip: str, payload: dict, timeout: float = 5.0) -> str:
     req = urllib.request.Request(
         f"http://{ip}/json/state",
-        data=json.dumps(payload).encode("utf-8"),
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         method="POST",
         headers={"Content-Type": "application/json"},
     )

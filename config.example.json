@@ -83,5 +83,12 @@
     "enabled": false,
     "group": 1,
     "note": "WLED 主从同步。group 为组位掩码(1=第1组)。需同时写 if.sync.send.en 和运行时 state.udpn.send，两者都为真才会真正广播(见 sync_devices.py --setup)。从设备会开启 recv.seg/recv.sb，否则四段式光配方会退化成整条同色。所有设备需相同 WLED 版本，否则同步包里的 FX id 会错位。"
+  },
+  "devices": {
+    "living_room": "",
+    "tv_backlight": ""
+  },
+  "_notes": {
+    "devices": "别名 -> 设备 IP。填好后可以用 `wled.py --dev living_room status` 代替记 IP。"
   }
 }

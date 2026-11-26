@@ -46,6 +46,25 @@ WLED 有主从同步。技能只需写入**主设备**，同组的其它灯带�
   换场景处镜像成对的单帧跳变 349。配方里动画段的 `fx`/`mi`/`of`/几何/`ix`/`c1`
   必须全程恒定，只允许变 `sx`（速度）/`bri`/`col`/`pal`。
 
+## 一条命令上手
+
+```bash
+python3 scripts/wled.py devices                  # 有哪些灯带、各自什么能力
+python3 scripts/wled.py status --dev strip70     # 当前状态（--json 给机器读）
+python3 scripts/wled.py scene 热带海岸 --apply --dev strip70
+python3 scripts/wled.py color 暖白 --dev strip70
+python3 scripts/wled.py effect 呼吸 --dev strip70                 # 说人话
+python3 scripts/wled.py effect Pacifica --sx 60 --palette "* Color Gradient" --dev strip70
+python3 scripts/wled.py save "海边日落" --dev strip70             # 存设备端预设
+python3 scripts/wled.py restore --dev strip70                     # 熄灯 + 归还同步
+```
+
+- **设备别名**：`config.json` 的 `devices` 里写 `{"strip70": "…", "strip490": "…"}`，
+  之后用别名代替 IP；`--dev` 写在动词前后都行。
+- **说人话**：`effect 呼吸/海浪/星空/极光/烛光/电视…` 会翻译成设备上真实存在的效果名
+  （映射见 `references/intent-map.md`，每个名字都在 220 个效果表里核对过）。
+- **自描述**：`effects` / `palettes` 直接读设备，永远和固件版本一致，不用查文档。
+
 ## Token 预算（实测，不是估算）
 
 技能激活时只加载 `SKILL.md`，其余一律按需：
@@ -250,6 +269,7 @@ A: 将 `recipes/` 目录下的 JSON 文件发送给朋友，朋友导入到自�
 
 ## 版本
 
+- v1.3.0 (2026-11-26): **统一入口 `wled.py`**（动词 + 设备别名 + 自描述 `effects`/`palettes` + `save`/`preset`/`recall` 一键复用），融合社区同类技能的交互优势；新增 `references/intent-map.md`（意图→效果，21 个效果全部在设备上核对存在，剔除本机没有的 `Forest`/`Sunset`）与 `references/done-checklist.md`（7 条交付前必查）；修 **中文预设名被存成 `\uXXXX`** （6 个脚本的 `json.dumps` 缺 `ensure_ascii=False`）与**预设落盘延迟**（改为回读确认）
 - v1.2.0 (2026-11-26): **Token 架构重构** —— SKILL.md 从 978 行 / ≈11.9k token 压到
   147 行 / ≈1.9k（-84%），改为「一张路由表 + 按需加载」：静态场景、动态模版、硬规则、
   能力位、取色链路、配方格式各自独立成 `references/*.md`；补「典型任务真实 token 成本」表，

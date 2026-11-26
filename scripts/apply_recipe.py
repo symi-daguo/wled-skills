@@ -104,7 +104,7 @@ def wled_request(ip, path, method="GET", data=None, timeout=5):
     url = f"http://{ip}{path}"
     req = urllib.request.Request(url, headers={"User-Agent": "DoubaoWledSkill/1.0"})
     if method == "POST" and data is not None:
-        req.data = json.dumps(data).encode("utf-8")
+        req.data = json.dumps(data, ensure_ascii=False).encode("utf-8")
         req.add_header("Content-Type", "application/json")
         req.method = "POST"
     else:

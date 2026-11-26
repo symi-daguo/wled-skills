@@ -1,7 +1,7 @@
 ---
 name: wled-skills
 description: WLED 灯带技能集（WLED Skills）。按自然语言快速出光效：场景配色（14 组静态氛围色）、图片取色、视频取色、1 分钟动态配方、按名称复用、局域网多设备同步；自动识别设备能力（RGB / RGBW / RGBCCT 五色、任意灯珠数、PWM 或 IC 灯带）并据此出码，写入前备份、写入后回读像素验收。WLED light-strip skill set — build any lighting mode from natural language (scene palettes, image/video colour extraction, 1-minute dynamic recipes, recall by name, LAN multi-device sync), auto-adapting to RGB / RGBW / RGBCCT strips of any LED count, with backup-before-write and pixel-level verification.
-version: 1.2.0
+version: 1.3.0
 author: symi-daguo
 category: smart-home
 permissions:
@@ -51,32 +51,38 @@ triggers:
   - 调色板
 ---
 
-# WLED Skills v1.2.0
+# WLED Skills v1.3.0
 
 把一句话变成能上屏的光效，并**用设备自己的帧缓冲证明**它真的上了屏。
 任意 WLED：RGB / RGBW / RGBCCT、任意灯珠数、PWM 或 IC 灯带。
 
-## 一张表：做什么 → 跑什么 → 读什么
+## 一条命令搞定 90%（推荐上手方式）
 
-| 你要做的事 | 怎么跑 / 读什么 | ≈token |
+统一入口 `scripts/wled.py`，动词 + 参数；`--dev <别名|IP>` 可写在动词前后。
+别名在 `config.json` 的 `devices` 里（`{"strip70": "…", "strip490": "…"}`），
+不用记 IP，也不会把内网地址写进对话。
+
+| 你要做的事 | 命令 | ≈token |
 |---|---|---|
-| 一句话出氛围色（14 组场景） | `scripts/scene_palette.py "热带海岸" --apply --ip <ip>` | 0（表在脚本里） |
-| 直接说颜色（中英文） | `scripts/scene_palette.py "暖白" --apply --ip <ip>` | 0 |
-| 看设备是什么灯带、多少颗 | `scripts/scene_palette.py --probe --ip <ip>` | 0 |
-| 懂配色原理 / 想改配色 | `references/scene-palettes.md` | 2.1k |
-| 静态渐变的渲染细节（`pal 4` 槽序、Shimmer `sx=0`） | `references/static-scenes.md` | 0.5k |
-| 做 1 分钟会动的光效 | `apply_recipe.py <配方> --ip <ip>` + `references/effect-templates.md` | 4.4k |
-| 设计顺序 / 物理速度推导 / 布局 | `references/workflow.md` | 5.0k |
-| 硬规则全文（Rule 1–11） | `references/rules.md` | 2.1k |
-| 设备能力位、拆白、双灯带口径 | `references/device-capability.md` | 0.9k |
-| 图片 / 视频取色链路 | `analyze_image.py` / `analyze_video.py` + `references/color-pipeline.md` | 0.6k |
-| 配方 JSON 格式 | `references/recipe-format.md` | 0.4k |
-| 某个字段 / 接口的官方原文 | `references/wled-official/` **只查需要的单篇** | 0.4–25k |
-| 当前固件到底有哪些效果 | **别读文档**：`GET /json/effects`（或 `scripts/resolve_fx.py`） | 0 |
-| **写设备之前** | `apply_recipe.py --backup --ip <ip>` + `references/device-safety.md` | 1.5k |
-| **测完收尾** | `scripts/scene_palette.py --off --ip <ip>` | 0 |
-| 多台灯带主从同步 | `scripts/sync_devices.py --ips a,b` | 0 |
-| **下次一键触发** | `scripts/save_preset.py --auto "<名字>"`（存设备端预设） | 0 |
+| 有哪些灯带、各自什么能力 | `wled.py devices` | 0 |
+| 现在什么状态 | `wled.py status`（`--json` 给机器读） | 0 |
+| 开关 / 亮度 | `wled.py on` · `wled.py off` · `wled.py bri 180` | 0 |
+| 给个颜色（中英文名或 `#hex`） | `wled.py color 暖白` · `wled.py color "#00B4D8"` | 0 |
+| 氛围色（14 组场景） | `wled.py scene 热带海岸 --apply` | 0 |
+| 换个效果（说人话也行） | `wled.py effect 呼吸` · `wled.py effect Pacifica` | 0 |
+| 效果 + 调色板 + 速度 | `wled.py effect Pacifica --sx 60 --palette "* Color Gradient"` | 0 |
+| 看本机有什么效果/调色板 | `wled.py effects 海` · `wled.py palettes 渐变` | 0 |
+| 存到设备、下次一键触发 | `wled.py save "海边日落"` → `wled.py preset 3` / `wled.py recall "海边日落"` | 0 |
+| 写前备份 / 收尾 | `wled.py backup` · `wled.py restore` | safety 1.5k |
+| 做 1 分钟动态配方 | `apply_recipe.py <配方> --ip <ip>` + `references/effect-templates.md` | 4.4k |
+| 设计顺序 / 物理速度推导 | `references/workflow.md` | 5.0k |
+| 只有拿不准的才查文档 | `references/rules.md` · `intent-map.md` · `device-capability.md` · `scene-palettes.md` · `static-scenes.md` · `color-pipeline.md` · `recipe-format.md` | 0.4–2.1k |
+| 某个字段的官方原文 | `references/wled-official/` **只查需要的单篇** | 0.4–25k |
+
+**效果清单永远问设备**：`wled.py effects` / `GET /json/effects`（220 个，随固件版本变）。
+不要读 25k token 的效果百科，也不要硬编码 id。
+
+交付前过一遍 `references/done-checklist.md`（7 条必查，含"灯亮着且是客户要的样子"）。
 
 ## 三条硬规则（违反即返工）
 

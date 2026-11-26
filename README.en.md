@@ -21,6 +21,25 @@ Most WLED skills on GitHub are thin HTTP wrappers (`power on`, `color 255 0 0`,
 | **Pixel-level verification** | Reads the real frame buffer over the WebSocket Peek stream (`{"lv":true}`) instead of trusting `/json/state`. Fields lie: with `lor>0` the API still reports `lm="UDP"` while every pushed frame is discarded. |
 | **Verified effect library** | Every template carries the measurement that let it in, and disproved writing styles go to a "不要这样写" list. Includes the Shimmer `sx=0` static-gradient trick, the `pal 4 = (ter, sec, prim)` slot order, and the scene-change reset that teleports a crest. |
 
+## One command
+
+```bash
+python3 scripts/wled.py devices                 # what strips, what capabilities
+python3 scripts/wled.py status --dev living     # current state (--json for machines)
+python3 scripts/wled.py scene ocean_sunset --apply --dev living
+python3 scripts/wled.py color "warm white" --dev living
+python3 scripts/wled.py effect breathe --dev living              # plain language
+python3 scripts/wled.py effect Pacifica --sx 60 --palette "* Color Gradient" --dev living
+python3 scripts/wled.py save "sunset" --dev living               # device-side preset
+python3 scripts/wled.py restore --dev living                     # light off + give sync back
+```
+
+Device aliases live in `config.json` → `devices` (`{"living": "…", "tv": "…"}`); `--dev`
+accepts an alias, an IP, or comes from `WLED_DEVICE`/`WLED_HOST`, and may be written before
+or after the verb. `effects` / `palettes` read the device itself, so they never drift from
+the firmware. Plain-language effect names are translated via `references/intent-map.md`,
+where every name was checked against the device's 220-effect table.
+
 ## Token budget (measured)
 
 Activating the skill loads `SKILL.md` only — a 147-line router at ≈1.9k tokens
