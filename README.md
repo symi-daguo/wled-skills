@@ -269,6 +269,11 @@ A: 将 `recipes/` 目录下的 JSON 文件发送给朋友，朋友导入到自�
 
 ## 版本
 
+- v1.4.0 (2026-11-26): 新增 `scripts/verify_shape.py`（**形状层验收**：亮界是否单向推进 /
+  是否整条同亮同灭 / 有无静态亮块），验收升级为**四层**（通信→像素→运动→形状）；
+  `apply_recipe` 支持 `start_pct`/`stop_pct` 按百分比定位段；`recipes/日出东方.json` 改为
+  **12 幕亮界推进**（60 秒，一份配方同时跑 70/490 颗），实测右边界增长 58%–91%；
+  文档纠正：`Sunrise` 亮区恒在中点、`Wipe` 是来回擦、`Meteor` 只亮 5% —— 都不能做单向日出
 - v1.3.2 (2026-11-26): 新增 `scripts/verify_motion.py`（**变化量质心**判据：区分"变亮"与"在动"）；
   `recipes/日出东方.json` 改为**双层**（Sunrise 天亮 + Meteor 走太阳），平均亮度 8→145；
   修 Meteor 的 `sx`/`ix` 被误钳（`sx` 是速度、`ix` 是拖尾长度），并加入 `W_PINNED_EFFECTS`

@@ -546,8 +546,14 @@ def build_segments(recipe, config, device_led_count=0):
         out = []
         for spec in seg_specs:
             start = int(spec.get("start", 0))
-            # 省略 stop / 填 0 = 铺满整条，让同一份配方能吃不同灯数的灯带
-            stop = int(spec.get("stop", 0) or total_leds)
+            if spec.get("start_pct") is not None:   # 与 stop_pct 配对：按百分比定位起点
+                start = round(total_leds * float(spec["start_pct"]) / 100.0)
+            # 省略 stop / 填 0 = 铺满整条；给了 stop_pct 就按百分比落位。
+            # 这样"边界往前走"这类配方可以一份同时跑 70 颗和 490 颗。
+            if spec.get("stop_pct") is not None:
+                stop = max(start + 1, round(total_leds * float(spec["stop_pct"]) / 100.0))
+            else:
+                stop = int(spec.get("stop", 0) or total_leds)
             if stop <= start or start < 0 or stop > total_leds:
                 raise ValueError(
                     "segments[%d] 的范围 %d-%d 非法（灯珠总数 %d）"
